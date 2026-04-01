@@ -1,0 +1,84 @@
+:root {
+    /* Main Theme Colors */
+    --p: #6366f1;
+    --p-dark: #4f46e5;
+    --purple: #5b2ea6;
+    --purple-light: #667eea;
+
+    /* Backgrounds and Cards */
+    --bg: #f5f7fa;
+    --light: #f3f4f6;
+    --card: #fff;
+    --muted-bg: #f3f3f6;
+
+    /* Text Colors */
+    --text: #2d3748;
+    --muted: #718096;
+
+    /* Functional Colors */
+    --danger: #f56565;
+    --ok: #10b981;
+    --warn: #f59e0b;
+    --border: #e2e8f0;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', Arial, Helvetica, sans-serif;
+    margin: 0;
+    padding: 0;
+    color: var(--text);
+    background: var(--bg);
+    line-height: 1.5;
+}
+
+/* Typography Helpers */
+.small { font-size: 13px; color: var(--muted); }
+.danger-text { color: var(--danger); }
+.success-text { color: var(--ok); }
+.warning-text { color: var(--warn); }
+.bold { font-weight: 700; }
+
+/* Common Display Helpers */
+.flex { display: flex; }
+.flex-column { display: flex; flex-direction: column; }
+.flex-between { display: flex; justify-content: space-between; align-items: center; }
+.flex-center { display: flex; justify-content: center; align-items: center; }
+.flex-center-y { display: flex; align-items: center; }
+.flex-wrap { flex-wrap: wrap; }
+.gap-5 { gap: 5px; }
+.gap-10 { gap: 10px; }
+.gap-20 { gap: 20px; }
+.hidden { display: none; }
+.relative { position: relative; }
+.absolute { position: absolute; }
+.w-auto { width: auto !important; }
+
+/* Margin/Padding Helpers */
+.m-0 { margin: 0 !important; }
+.mt-5 { margin-top: 5px; }
+.mt-10 { margin-top: 10px; }
+.mt-15 { margin-top: 15px; }
+.mt-20 { margin-top: 20px; }
+.mb-10 { margin-bottom: 10px; }
+.mb-20 { margin-bottom: 20px; }
+.p-0 { padding: 0 !important; }
+.p-10 { padding: 10px; }
+.p-15 { padding: 15px; }
+.p-20 { padding: 20px; }
+.px-30 { padding-left: 30px !important; padding-right: 30px !important; }
+.px-40 { padding-left: 40px !important; padding-right: 40px !important; }
+
+/* Scrollbar reset */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+
+/* Layout Grid */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+@media (max-width: 768px) {
+    .grid-2 { grid-template-columns: 1fr; }
+}
