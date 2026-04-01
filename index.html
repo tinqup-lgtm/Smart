@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SmartLMS - Modern Learning Platform</title>
+
+  <!-- Modular CSS -->
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/landing.css">
+
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script defer src="js/supabase-config.js"></script>
+  <script defer src="js/core.js"></script>
+  <script defer src="js/auth.js"></script>
+  <link rel="manifest" href="manifest.json">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body class="landing-page">
+  <header class="landing-header">
+    <a href="#" class="logo"><span>🎓</span> SmartLMS</a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#about">About</a>
+      <a href="#" id="navSignIn" onclick="showLogin()">Sign In</a>
+    </div>
+    <button id="navGetStarted" class="button" style="width: auto; margin: 0; padding: 0.6rem 1.5rem" onclick="showLogin()">Get Started</button>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div id="maintBanner" class="badge-warn" style="display:none; border-radius:1rem; padding:0.75rem 1.5rem; margin-bottom:2rem; text-align:center; font-size:0.875rem"></div>
+      <h1>Modern Learning for Everyone</h1>
+      <p>Empower your education with our all-in-one learning management system. Collaborative, interactive, and built for results.</p>
+
+      <div class="role-grid">
+        <div class="role-btn" id="heroStudent" onclick="showRoleAuth('student')">
+          <div class="icon">🧑‍🎓</div>
+          <span>Student</span>
+        </div>
+        <div class="role-btn" id="heroTeacher" onclick="showRoleAuth('teacher')">
+          <div class="icon">🧑‍🏫</div>
+          <span>Teacher</span>
+        </div>
+        <div class="role-btn" id="heroAdmin" onclick="showRoleAuth('admin')">
+          <div class="icon">⚙️</div>
+          <span>Admin</span>
+        </div>
+      </div>
+
+      <div id="features" class="features">
+        <div class="feat-card">
+          <div class="icon">📈</div>
+          <h3>Progress Tracking</h3>
+          <p>Monitor your learning journey with advanced analytics and visual progress reports.</p>
+        </div>
+        <div class="feat-card">
+          <div class="icon">💬</div>
+          <h3>Interactive Discussions</h3>
+          <p>Engage with peers and teachers in real-time through course-specific discussion boards.</p>
+        </div>
+        <div class="feat-card">
+          <div class="icon">🏆</div>
+          <h3>Gamified Experience</h3>
+          <p>Earn XP, level up, and collect badges as you complete courses and assignments.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="about" class="about-section">
+      <div class="about-content">
+        <h2>About SmartLMS</h2>
+        <p>SmartLMS is a next-generation learning platform designed to bridge the gap between students and educators. Our mission is to provide tools that make learning organized, engaging, and accessible to everyone.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="landing-footer">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <h4>SmartLMS</h4>
+        <p>Making education accessible and interactive for everyone, everywhere. Start your journey today.</p>
+        <div class="social-links">
+          <a href="https://x.com" target="_blank" title="X (Twitter)">𝕏</a>
+          <a href="https://www.facebook.com" target="_blank" title="Facebook">𝑓</a>
+          <a href="https://www.instagram.com" target="_blank" title="Instagram">📷</a>
+          <a href="https://www.linkedin.com" target="_blank" title="LinkedIn">💼</a>
+        </div>
+      </div>
+      <div class="footer-links">
+        <h5>Platform</h5>
+        <ul>
+          <li><a href="#" onclick="showRoleAuth('student')">Students</a></li>
+          <li><a href="#" onclick="showRoleAuth('teacher')">Teachers</a></li>
+          <li><a href="#" onclick="showRoleAuth('admin')">Admins</a></li>
+        </ul>
+      </div>
+      <div class="footer-links">
+        <h5>Company</h5>
+        <ul>
+          <li><a href="#about">About Us</a></li>
+          <li><a href="#">Privacy Policy</a></li>
+          <li><a href="#">Terms of Service</a></li>
+          <li><a href="#">Support</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      &copy; 2024 SmartLMS Platform. All rights reserved.
+    </div>
+  </footer>
+
+  <!-- Auth Overlays -->
+  <div id="authOverlay" class="overlay" onclick="if(event.target===this)closeAuth()">
+    <!-- Signup -->
+    <div id="signup" class="container" onclick="event.stopPropagation()">
+      <button class="close-btn" onclick="closeAuth()">×</button>
+      <div id="maintBannerSignup" class="badge-warn" style="display:none; border-radius:6px; padding:6px 10px; margin-bottom:8px; text-align:center; font-size:13px"></div>
+      <h2 id="signup-title">Sign Up</h2>
+      <form id="signupForm" novalidate>
+        <input type="text" id="fullName" placeholder="Full Name" required>
+        <input type="email" id="email" placeholder="Email" required>
+        <input type="tel" id="phone" placeholder="Phone (optional)">
+        <input type="password" id="password" placeholder="Password" required>
+        <input type="password" id="confirmPassword" placeholder="Confirm Password" required>
+        <input type="hidden" id="role" value="student">
+        <button type="submit" class="button">Create Account</button>
+        <p class="note">Already have an account? <a href="#" onclick="showLogin()">Sign in</a></p>
+      </form>
+      <p class="error" id="signupError"></p>
+    </div>
+
+    <!-- Login -->
+    <div id="login" class="container" onclick="event.stopPropagation()">
+      <button class="close-btn" onclick="closeAuth()">×</button>
+      <div id="maintBannerLogin" class="badge-warn" style="display:none; border-radius:6px; padding:6px 10px; margin-bottom:8px; text-align:center; font-size:13px"></div>
+      <h2>Login</h2>
+      <form id="loginForm" novalidate>
+        <input type="email" id="loginEmail" placeholder="Email" required>
+        <p class="error" id="loginEmailError"></p>
+        <input type="password" id="loginPassword" placeholder="Password" required>
+        <p class="error" id="loginPasswordError"></p>
+        <button type="submit" class="button">Login</button>
+      </form>
+      <p class="note"><a href="#" onclick="showReset()">Forgot Password?</a></p>
+      <p class="note">No account? <a href="#" onclick="showSignup()">Create one</a></p>
+    </div>
+
+    <!-- Reset Request -->
+    <div id="reset" class="container" onclick="event.stopPropagation()">
+      <button class="close-btn" onclick="closeAuth()">×</button>
+      <div id="maintBannerReset" class="badge-warn" style="display:none; border-radius:6px; padding:6px 10px; margin-bottom:8px; text-align:center; font-size:13px"></div>
+      <h2>Reset Password</h2>
+      <form id="resetForm" novalidate>
+        <input type="email" id="resetEmail" placeholder="Enter your email" required>
+        <button type="submit" class="button">Request Reset</button>
+      </form>
+      <p class="note"><a href="#" onclick="showLogin()">Back to login</a></p>
+      <p class="error" id="resetError"></p>
+    </div>
+
+    <!-- Set New Password (after temp login) -->
+    <div id="newPassword" class="container" onclick="event.stopPropagation()">
+      <button class="close-btn" onclick="closeAuth()">×</button>
+      <h2>Set New Password</h2>
+      <form id="newPasswordForm" novalidate>
+        <input type="password" id="newPass" placeholder="New Password" required>
+        <input type="password" id="confirmNewPass" placeholder="Confirm New Password" required>
+        <button type="submit" class="button">Update Password</button>
+      </form>
+      <p class="error" id="newPasswordError"></p>
+    </div>
+  </div>
+</body>
+</html>

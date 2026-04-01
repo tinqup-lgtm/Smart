@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SmartLMS - Admin Dashboard</title>
+
+<!-- Modular CSS -->
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/themes.css">
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase-config.js"></script>
+<script src="js/core.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="js/admin.js"></script>
+<link rel="manifest" href="manifest.json">
+</head>
+<body class="admin-dashboard">
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">⚙️</div>
+      <span>SmartLMS Admin</span>
+    </div>
+    <nav id="adminNav">
+      <button class="active" data-page="dashboard">📊 <span>Dashboard</span></button>
+      <button data-page="resets">🔄 <span>Password Resets</span> <span id="resetBadge" class="badge" style="display:none">-</span></button>
+      <button data-page="users">👥 <span>Users</span></button>
+      <button data-page="analytics">📈 <span>Analytics</span></button>
+      <button data-page="maintenance">🛡️ <span>System & Admin Control</span></button>
+      <button data-page="health">🏥 <span>System Health</span></button>
+      <button data-page="management">⚙️ <span>System Management</span></button>
+      <button data-page="settings">⚙️ <span>Admin Settings</span></button>
+      <button data-page="system">ℹ️ <span>System Info</span></button>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <header class="dashboard-header">
+      <div class="flex-center" style="gap:10px">
+        <button id="sidebarToggle" class="button" style="width:auto; background:transparent; border:none; color:inherit; font-size:24px; padding:5px 10px; cursor:pointer;">☰</button>
+        <div class="header-title" style="font-size:18px; font-weight:800">Admin Dashboard</div>
+      </div>
+      <div class="actions flex" style="gap:10px; align-items:center">
+        <div id="notifBell" class="notif-bell-container" style="font-size:20px">🔔</div>
+        <div id="unreadCount" class="unread-count" style="display:none">0</div>
+        <div id="notifList" class="notif-list"></div>
+      </div>
+      <button id="logoutBtn" class="button" style="width:auto; padding:5px 15px;">Logout</button>
+    </header>
+
+    <div class="content-area">
+      <div id="maintBanner" class="badge-warn" style="display:none; border-radius:6px; padding:6px 10px; margin-bottom:16px; text-align:center; font-size:13px"></div>
+      <div id="pageContent"></div>
+    </div>
+  </main>
+</div>
+
+<div id="modalBackdrop" class="modal-backdrop">
+  <div id="modal" class="modal"></div>
+</div>
+
+</body>
+</html>
