@@ -205,6 +205,7 @@ function displayUsers(users) {
 
 // Ensure all handlers are global
 window.renderDashboard = renderDashboard;
+window.initRealtimeSubscriptions = initRealtimeSubscriptions;
 window.renderUsers = renderUsers;
 window.renderResets = renderResets;
 window.renderAnalytics = renderAnalytics;
@@ -771,6 +772,22 @@ async function importBackup(event) {
   reader.readAsText(file);
 }
 
+function initRealtimeSubscriptions(email) {
+  if (!window.supabaseClient) return;
+
+  window.supabaseClient
+    .channel('admin-db-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'quiz_submissions' }, () => {
+      const activeEl = document.activeElement;
+      const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
+      if (!isTyping && document.querySelector('[data-page="dashboard"].active')) renderDashboard();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_email=eq.${email}` }, () => {
+      NotificationManager.updateUI();
+    })
+    .subscribe();
+}
+
 async function renderSettings() {
   const content = document.getElementById('pageContent');
   if (!content) return;
@@ -981,6 +998,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const user = await initDashboard('admin');
   if (user) {
     initNav();
+    initRealtimeSubscriptions(user.email);
     renderDashboard();
     updateSidebarBadges();
     setInterval(updateSidebarBadges, 60000);

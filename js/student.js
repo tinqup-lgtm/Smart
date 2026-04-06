@@ -945,24 +945,14 @@ window.submitAssignment = submitAssignment;
 window.deleteSubmissionById = deleteSubmissionById;
 window.startQuiz = startQuiz;
 window.viewQuizResults = viewQuizResults;
-window.autoSaveQuiz = autoSaveQuiz;
+window.autoSubmitQuiz = autoSubmitQuiz;
 window.submitQuiz = submitQuiz;
+window.initRealtimeSubscriptions = initRealtimeSubscriptions;
 window.postDiscussion = postDiscussion;
 window.addPlannerItem = addPlannerItem;
 window.deletePlannerItem = deletePlannerItem;
 window.filterCatalog = filterCatalog;
 window.viewStudentDiscussions = viewStudentDiscussions;
-window.renderDashboardOverview = renderDashboardOverview;
-window.renderMyCourses = renderMyCourses;
-window.renderProgress = renderProgress;
-window.renderGrades = renderGrades;
-window.renderCalendar = renderCalendar;
-window.renderMaterials = renderMaterials;
-window.renderDiscussions = renderDiscussions;
-window.renderCertificates = renderCertificates;
-window.renderPlanner = renderPlanner;
-window.renderSettings = renderSettings;
-window.renderHelp = renderHelp;
 
 async function renderCertificates() {
   const user = await SessionManager.getCurrentUser();
@@ -1273,6 +1263,20 @@ async function renderHelp() {
   content.innerHTML = '<h2>Help & Support</h2><div class="card"><h3>FAQ</h3><p>Contact support at support@smartlms.com</p></div>';
 }
 
+function initRealtimeSubscriptions(email) {
+  if (!window.supabaseClient) return;
+
+  window.supabaseClient
+    .channel('student-db-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'quiz_submissions', filter: `student_email=eq.${email}` }, () => {
+      if (!currentQuiz) renderQuizzes();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_email=eq.${email}` }, () => {
+      NotificationManager.updateUI();
+    })
+    .subscribe();
+}
+
 async function renderSettings() {
   const content = document.getElementById('pageContent');
   if (!content) return;
@@ -1309,7 +1313,6 @@ async function saveNotificationSettings() {
 }
 
 window.saveNotificationSettings = saveNotificationSettings;
-window.renderSettings = renderSettings;
 
 async function renderQuizzes() {
   const user = await SessionManager.getCurrentUser();
@@ -1330,9 +1333,10 @@ async function renderQuizzes() {
     <div class="grid mt-20">
       ${quizzes.map(q => {
         const mySubs = subs.filter(s => s.quiz_id === q.id && s.status === 'submitted').sort((a,b) => new Date(b.submitted_at) - new Date(a.submitted_at));
+        const draft = subs.find(s => s.quiz_id === q.id && s.status === 'draft');
         const bestScore = mySubs.length ? Math.max(...mySubs.map(s => s.score || 0)) : '-';
-        const attemptsUsed = mySubs.length;
-        const canAttempt = attemptsUsed < q.attempts_allowed;
+        const attemptsUsed = subs.filter(s => s.quiz_id === q.id).length;
+        const canAttempt = attemptsUsed < q.attempts_allowed || !!draft;
 
         const course = courses.find(c => c.id === q.course_id);
         return `
@@ -1367,7 +1371,7 @@ async function renderQuizzes() {
 
             <div class="mt-20">
                 ${canAttempt ?
-                    `<button class="button w-auto small px-20" onclick="startQuiz('${q.id}')">Start New Attempt</button>` :
+                    `<button class="button w-auto small px-20" onclick="startQuiz('${q.id}')">${draft ? 'Resume Attempt' : 'Start New Attempt'}</button>` :
                     '<div class="badge badge-inactive w-100 text-center">All Attempts Used</div>'
                 }
             </div>
@@ -1438,7 +1442,7 @@ async function startQuiz(quizId) {
     if (q.type === 'mcq') {
       inputHtml = q.options.map((opt, i) => `
         <div class="flex-center-y gap-10 mt-10" style="background:#fff; border:1px solid var(--border); padding:12px; border-radius:8px; cursor:pointer" onclick="const r=this.querySelector('input'); r.checked=true; r.dispatchEvent(new Event('change'))">
-          <input type="radio" name="q-${idx}" value="${i}" onchange="autoSaveQuiz()" style="width:auto; margin:0">
+          <input type="radio" name="q-${idx}" value="${i}" onchange="autoSubmitQuiz()" style="width:auto; margin:0">
           <div class="small">${escapeHtml(opt)}</div>
         </div>
       `).join('');
@@ -1446,17 +1450,17 @@ async function startQuiz(quizId) {
       inputHtml = `
         <div class="grid-2 gap-10 mt-10">
           <div class="flex-center-y gap-10" style="background:#fff; border:1px solid var(--border); padding:12px; border-radius:8px; cursor:pointer" onclick="const r=this.querySelector('input'); r.checked=true; r.dispatchEvent(new Event('change'))">
-            <input type="radio" name="q-${idx}" value="True" onchange="autoSaveQuiz()" style="width:auto; margin:0">
+            <input type="radio" name="q-${idx}" value="True" onchange="autoSubmitQuiz()" style="width:auto; margin:0">
             <div class="small">True</div>
           </div>
           <div class="flex-center-y gap-10" style="background:#fff; border:1px solid var(--border); padding:12px; border-radius:8px; cursor:pointer" onclick="const r=this.querySelector('input'); r.checked=true; r.dispatchEvent(new Event('change'))">
-            <input type="radio" name="q-${idx}" value="False" onchange="autoSaveQuiz()" style="width:auto; margin:0">
+            <input type="radio" name="q-${idx}" value="False" onchange="autoSubmitQuiz()" style="width:auto; margin:0">
             <div class="small">False</div>
           </div>
         </div>
       `;
     } else if (q.type === 'short') {
-      inputHtml = `<input type="text" class="input" placeholder="Your answer..." oninput="autoSaveQuiz()" data-q-idx="${idx}">`;
+      inputHtml = `<input type="text" class="input" placeholder="Your answer..." oninput="autoSubmitQuiz()" data-q-idx="${idx}">`;
     }
 
     qDiv.innerHTML = `
@@ -1521,8 +1525,8 @@ function updateTimerDisplay(s) {
 }
 
 let quizDebounceTimer = null;
-async function autoSaveQuiz() {
-  if (!currentSubmission) return;
+async function autoSubmitQuiz() {
+  if (!currentSubmission || currentSubmission.status !== 'draft') return;
   if (quizDebounceTimer) clearTimeout(quizDebounceTimer);
   quizDebounceTimer = setTimeout(async () => {
       const answers = getQuizAnswers();
@@ -1549,6 +1553,7 @@ async function submitQuiz() {
   const btn = document.getElementById('submitQuizBtn');
   if (btn) btn.disabled = true;
   if (quizTimer) clearInterval(quizTimer);
+  if (quizDebounceTimer) clearTimeout(quizDebounceTimer);
   const user = await SessionManager.getCurrentUser();
   const answers = getQuizAnswers();
   
@@ -1779,6 +1784,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const user = await initDashboard('student');
   if (user) {
     initNav();
+    initRealtimeSubscriptions(user.email);
     renderDashboardOverview();
     setInterval(updateMaintBanner, 30000);
     updateMaintBanner();

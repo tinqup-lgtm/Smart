@@ -919,6 +919,7 @@ window.editQuiz = editQuiz;
 window.deleteQuizById = deleteQuizById;
 window.viewQuizResults = viewQuizResults;
 window.renderDashboard = renderDashboard;
+window.initRealtimeSubscriptions = initRealtimeSubscriptions;
 window.renderCourses = renderCourses;
 window.renderAssignments = renderAssignments;
 window.renderMaterials = renderMaterials;
@@ -1008,6 +1009,26 @@ async function awardBadge(badgeId) {
   } catch (e) {
     alert('Error awarding badge: ' + e.message);
   }
+}
+
+function initRealtimeSubscriptions(email) {
+  if (!window.supabaseClient) return;
+
+  window.supabaseClient
+    .channel('teacher-db-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'quiz_submissions' }, () => {
+      const activeEl = document.activeElement;
+      const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
+      if (!isTyping) {
+        if (document.querySelector('[data-page="quizzes"].active')) renderQuizzes();
+        if (document.querySelector('[data-page="grading"].active')) renderGrading();
+        if (document.querySelector('[data-page="gradebook"].active')) renderGradeBook();
+      }
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_email=eq.${email}` }, () => {
+      NotificationManager.updateUI();
+    })
+    .subscribe();
 }
 
 async function renderSettings() {
@@ -2126,6 +2147,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const user = await initDashboard('teacher');
   if (user) {
     initNav();
+    initRealtimeSubscriptions(user.email);
     renderDashboard();
     setInterval(updateMaintBanner, 30000);
     updateMaintBanner();

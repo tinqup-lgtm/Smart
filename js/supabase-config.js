@@ -214,9 +214,10 @@ class SupabaseDB {
     }
 
     static async saveSubmission(submission) {
+        const { assignments, ...payload } = submission;
         const { data, error } = await supabaseClient
             .from('submissions')
-            .upsert(submission, { onConflict: 'assignment_id,student_email' })
+            .upsert(payload, { onConflict: 'assignment_id,student_email' })
             .select();
         if (error) throw error;
         return data?.[0];
@@ -501,9 +502,10 @@ class SupabaseDB {
     }
 
     static async saveQuizSubmission(submission) {
+        const { quizzes, ...payload } = submission;
         const { data, error } = await supabaseClient
             .from('quiz_submissions')
-            .upsert(submission, { onConflict: 'id' })
+            .upsert(payload, { onConflict: 'id' })
             .select();
         if (error) throw error;
         return data?.[0];
