@@ -265,6 +265,20 @@ class SupabaseDB {
             .eq('email', oldEmail)
             .select();
         if (error) throw error;
+
+        // Update secrets via secure RPC if provided
+        if (userData.password || userData.session_id) {
+            try {
+                await supabaseClient.rpc('update_user_secret_secure', {
+                    p_email: newEmail,
+                    p_password_hash: userData.password || null,
+                    p_session_id: userData.session_id || (userData.password ? 'invalidated_' + Date.now() : null)
+                });
+            } catch (e) {
+                console.warn('Failed to update user secrets during email change:', e);
+            }
+        }
+
         _cache.invalidate('users');
         _cache.invalidate(`user_${oldEmail}`);
         _cache.invalidate(`user_${newEmail}`);

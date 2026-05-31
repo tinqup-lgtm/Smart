@@ -1282,13 +1282,13 @@ BEGIN
         RAISE EXCEPTION 'Unauthorized to update secrets for this user.';
     END IF;
 
-    IF p_password_hash IS NOT NULL THEN
-        UPDATE user_secrets SET password_hash = p_password_hash WHERE email = p_email;
-    END IF;
-
-    IF p_session_id IS NOT NULL THEN
-        UPDATE user_secrets SET session_id = p_session_id WHERE email = p_email;
-    END IF;
+    -- Use UPSERT to handle cases where secret record might be missing during migration/update
+    INSERT INTO user_secrets (email, password_hash, session_id)
+    VALUES (p_email, COALESCE(p_password_hash, 'MIGRATION_PENDING'), p_session_id)
+    ON CONFLICT (email) DO UPDATE SET
+        password_hash = CASE WHEN p_password_hash IS NOT NULL THEN EXCLUDED.password_hash ELSE user_secrets.password_hash END,
+        session_id = CASE WHEN p_session_id IS NOT NULL THEN EXCLUDED.session_id ELSE user_secrets.session_id END,
+        updated_at = NOW();
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
