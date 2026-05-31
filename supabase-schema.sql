@@ -8,6 +8,18 @@ SET client_min_messages TO NOTICE;
 -- Extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- 0. Internal helper for notification creation (bypasses RLS)
+-- Defined early as it is used by triggers and RPCs
+-- We drop it first to handle potential parameter name/type changes (ERROR 42P13)
+DROP FUNCTION IF EXISTS notify_user(VARCHAR, TEXT, TEXT, TEXT, TEXT) CASCADE;
+CREATE OR REPLACE FUNCTION notify_user(p_email VARCHAR, p_title TEXT, p_message TEXT, p_link TEXT DEFAULT NULL, p_type TEXT DEFAULT 'system')
+RETURNS VOID AS $$
+BEGIN
+  INSERT INTO notifications (user_email, title, message, link, type)
+  VALUES (p_email, p_title, p_message, p_link, p_type);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- Utility Functions
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -15,7 +27,7 @@ BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$ language 'plpgsql' SECURITY DEFINER;
 
 -- 1. Tables Creation (With all columns integrated)
 
@@ -351,26 +363,31 @@ CREATE TABLE IF NOT EXISTS support_tickets (
 
 -- 2. Migrations for existing tables (Idempotent)
 
--- Separate top-level ALTER statements to ensure columns exist for subsequent script parsing
-ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
-ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '30 days');
-ALTER TABLE notifications ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '90 days');
-ALTER TABLE quiz_submissions ADD COLUMN IF NOT EXISTS attempt_number INTEGER;
-ALTER TABLE quiz_submissions ALTER COLUMN attempt_number DROP NOT NULL;
-ALTER TABLE quiz_submissions ALTER COLUMN status SET DEFAULT 'in-progress';
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS assessment_id UUID;
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS assessment_type VARCHAR(50);
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS type VARCHAR(100);
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS browser VARCHAR(100);
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS device VARCHAR(50);
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS os VARCHAR(50);
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS elapsed_time INTEGER;
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS score INTEGER;
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS severity VARCHAR(20);
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
-ALTER TABLE violations DROP COLUMN IF EXISTS details;
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW();
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '90 days');
+DO $$
+BEGIN
+    -- Separate top-level ALTER statements inside DO block to ensure columns exist for subsequent script parsing
+    ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
+    ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '30 days');
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '90 days');
+    ALTER TABLE quiz_submissions ADD COLUMN IF NOT EXISTS attempt_number INTEGER;
+    ALTER TABLE quiz_submissions ALTER COLUMN attempt_number DROP NOT NULL;
+    ALTER TABLE quiz_submissions ALTER COLUMN status SET DEFAULT 'in-progress';
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS assessment_id UUID;
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS assessment_type VARCHAR(50);
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS type VARCHAR(100);
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS browser VARCHAR(100);
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS device VARCHAR(50);
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS os VARCHAR(50);
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS elapsed_time INTEGER;
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS score INTEGER;
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS severity VARCHAR(20);
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+    ALTER TABLE violations DROP COLUMN IF EXISTS details;
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '90 days');
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'Migration step failed: %', SQLERRM;
+END $$;
 
 -- Fix quiz_submissions status check constraint if it was incorrectly initialized
 DO $$
@@ -609,7 +626,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_live_class_event ON live_classes;
 CREATE TRIGGER tr_live_class_event AFTER INSERT OR UPDATE ON live_classes FOR EACH ROW EXECUTE PROCEDURE tr_notify_live_class();
@@ -621,7 +638,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_assignment_published ON assignments;
 CREATE TRIGGER tr_assignment_published AFTER INSERT OR UPDATE ON assignments FOR EACH ROW EXECUTE PROCEDURE tr_notify_assignment();
@@ -633,7 +650,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_quiz_published ON quizzes;
 CREATE TRIGGER tr_quiz_published AFTER INSERT OR UPDATE ON quizzes FOR EACH ROW EXECUTE PROCEDURE tr_notify_quiz();
@@ -650,7 +667,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_submission_received ON submissions;
 CREATE TRIGGER tr_submission_received AFTER INSERT OR UPDATE ON submissions FOR EACH ROW EXECUTE PROCEDURE tr_notify_submission();
@@ -662,7 +679,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_grade_posted ON submissions;
 CREATE TRIGGER tr_grade_posted AFTER INSERT OR UPDATE ON submissions FOR EACH ROW EXECUTE PROCEDURE tr_notify_grade();
@@ -672,7 +689,7 @@ BEGIN
   SELECT full_name INTO NEW.created_by FROM users WHERE email = NEW.teacher_email;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_course_teacher_name_sync ON courses;
 CREATE TRIGGER tr_course_teacher_name_sync
@@ -686,7 +703,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_users_teacher_name_sync ON users;
 CREATE TRIGGER tr_users_teacher_name_sync
@@ -713,7 +730,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_course_owner_sync_children ON courses;
 CREATE TRIGGER tr_course_owner_sync_children
@@ -746,7 +763,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_topic_data_inherit ON topics;
 CREATE TRIGGER tr_topic_data_inherit BEFORE INSERT ON topics FOR EACH ROW EXECUTE PROCEDURE tr_inherit_course_data();
@@ -1050,8 +1067,19 @@ CREATE INDEX IF NOT EXISTS idx_violations_course_id ON violations(course_id);
 CREATE INDEX IF NOT EXISTS idx_violations_teacher_email ON violations(teacher_email);
 CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by);
 
+-- Support Tickets Indexes
+CREATE INDEX IF NOT EXISTS idx_support_tickets_user_email ON support_tickets(user_email);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON support_tickets(status);
+
+-- Notification/Broadcast Sorting Optimization
+CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_email, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_broadcasts_course_role ON broadcasts(course_id, target_role);
+
 -- Index for performant RLS identity resolution
 CREATE INDEX IF NOT EXISTS idx_user_secrets_session_id ON user_secrets(session_id);
+
+-- Explicit FK Index for Topics
+CREATE INDEX IF NOT EXISTS idx_topics_course_id ON topics(course_id);
 
 -- Composite Indexes for Foreign Key Pairs & Common Lookups
 CREATE INDEX IF NOT EXISTS idx_enrollments_composite ON enrollments(course_id, student_email);
@@ -1331,6 +1359,62 @@ RETURNS TIMESTAMP WITH TIME ZONE AS $$
   SELECT NOW();
 $$ LANGUAGE sql STABLE;
 
+-- Secure RPC for password reset request (unauthenticated)
+CREATE OR REPLACE FUNCTION request_password_reset_secure(
+    p_email VARCHAR,
+    p_reason TEXT,
+    p_custom_reason TEXT DEFAULT NULL
+) RETURNS JSONB AS $$
+DECLARE
+    v_user RECORD;
+BEGIN
+    SELECT * INTO v_user FROM users WHERE email = p_email;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Account not found');
+    END IF;
+
+    IF NOT v_user.active THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Account deactivated');
+    END IF;
+
+    IF v_user.flagged THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Account flagged');
+    END IF;
+
+    IF v_user.locked_until IS NOT NULL AND v_user.locked_until > NOW() THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Account locked until ' || v_user.locked_until);
+    END IF;
+
+    -- Check for existing pending/approved reset
+    IF v_user.reset_request IS NOT NULL AND
+       (v_user.reset_request->>'expires_at' IS NULL OR (v_user.reset_request->>'expires_at')::TIMESTAMP WITH TIME ZONE > NOW()) THEN
+
+        IF v_user.reset_request->>'status' = 'pending' THEN
+            RETURN jsonb_build_object('success', false, 'message', 'Reset request already pending review.');
+        ELSIF v_user.reset_request->>'status' = 'approved' THEN
+            RETURN jsonb_build_object('success', false, 'message', 'Reset already approved. Use temporary password provided by administrator.');
+        END IF;
+    END IF;
+
+    -- Update User
+    UPDATE users SET reset_request = jsonb_build_object(
+        'status', 'pending',
+        'reason', p_reason,
+        'custom_reason', p_custom_reason,
+        'temp_password', null,
+        'created_at', NOW(),
+        'expires_at', null,
+        'denial_reason', null
+    ) WHERE email = p_email;
+
+    -- Create Notification
+    PERFORM notify_user(p_email, 'Reset Requested', 'Password reset requested and pending admin review.', null, 'reset_requested');
+
+    RETURN jsonb_build_object('success', true, 'message', 'Password reset request submitted.');
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- 7b. Quiz Authoritative Logic RPCs
 
 -- Helper for centralized scoring
@@ -1584,13 +1668,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION notify_user(target_email VARCHAR, n_title TEXT, n_msg TEXT, n_link TEXT DEFAULT NULL, n_type TEXT DEFAULT 'system')
-RETURNS VOID AS $$
-BEGIN
-  INSERT INTO notifications (user_email, title, message, link, type)
-  VALUES (target_email, n_title, n_msg, n_link, n_type);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION broadcast_data(n_course_id UUID, n_role VARCHAR, n_title TEXT, n_msg TEXT, n_link TEXT DEFAULT NULL, n_type TEXT DEFAULT 'system', n_expires_in INTERVAL DEFAULT INTERVAL '30 days')
 RETURNS VOID AS $$
@@ -1648,7 +1725,7 @@ BEGIN
         SELECT table_name
         FROM information_schema.tables
         WHERE table_schema = 'public'
-        AND table_name IN ('users', 'user_secrets', 'courses', 'lessons', 'enrollments', 'assignments', 'submissions', 'live_classes', 'attendance', 'quizzes', 'quiz_submissions', 'materials', 'discussions', 'notifications', 'broadcasts', 'maintenance', 'planner', 'certificates', 'study_sessions', 'invites', 'violations', 'support_tickets')
+        AND table_name IN ('users', 'user_secrets', 'courses', 'topics', 'lessons', 'enrollments', 'assignments', 'submissions', 'live_classes', 'attendance', 'quizzes', 'quiz_submissions', 'materials', 'discussions', 'notifications', 'broadcasts', 'maintenance', 'planner', 'certificates', 'study_sessions', 'invites', 'violations', 'support_tickets')
     LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     END LOOP;
@@ -1940,8 +2017,67 @@ GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, postgres, servi
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, postgres, service_role;
 GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, postgres, service_role;
 
--- 10. Storage Initialization
+-- 10. Realtime Cleanup
+DROP PUBLICATION IF EXISTS supabase_realtime;
+
+-- 11. Storage Initialization
+-- 11. Storage Initialization & Policies
 
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('materials', 'materials', true), ('assignments', 'assignments', true), ('certificates', 'certificates', true)
 ON CONFLICT (id) DO NOTHING;
+
+-- Enable RLS on storage.objects
+ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+
+-- 11.1 Materials Bucket Policies (Public Read, Teacher Manage)
+DROP POLICY IF EXISTS "Materials: Public Read" ON storage.objects;
+CREATE POLICY "Materials: Public Read" ON storage.objects FOR SELECT USING (bucket_id = 'materials');
+
+DROP POLICY IF EXISTS "Materials: Teacher Manage" ON storage.objects;
+CREATE POLICY "Materials: Teacher Manage" ON storage.objects FOR ALL USING (
+    bucket_id = 'materials' AND (is_teacher() OR is_admin())
+);
+
+-- 11.2 Assignments Bucket Policies (Restricted Access)
+DROP POLICY IF EXISTS "Assignments: Teacher Manage" ON storage.objects;
+CREATE POLICY "Assignments: Teacher Manage" ON storage.objects FOR ALL USING (
+    bucket_id = 'assignments' AND (is_teacher() OR is_admin())
+);
+
+DROP POLICY IF EXISTS "Assignments: Student View Templates" ON storage.objects;
+CREATE POLICY "Assignments: Student View Templates" ON storage.objects FOR SELECT USING (
+    bucket_id = 'assignments' AND (storage.foldername(name))[1] = 'templates'
+);
+
+DROP POLICY IF EXISTS "Assignments: Student View Own" ON storage.objects;
+CREATE POLICY "Assignments: Student View Own" ON storage.objects FOR SELECT USING (
+    bucket_id = 'assignments' AND
+    (storage.foldername(name))[1] = 'submissions' AND
+    (storage.foldername(name))[3] = get_auth_email()
+);
+
+DROP POLICY IF EXISTS "Assignments: Student Upload Own" ON storage.objects;
+CREATE POLICY "Assignments: Student Upload Own" ON storage.objects FOR INSERT WITH CHECK (
+    bucket_id = 'assignments' AND
+    (storage.foldername(name))[1] = 'submissions' AND
+    (storage.foldername(name))[3] = get_auth_email()
+);
+
+DROP POLICY IF EXISTS "Assignments: Student Delete Own" ON storage.objects;
+CREATE POLICY "Assignments: Student Delete Own" ON storage.objects FOR DELETE USING (
+    bucket_id = 'assignments' AND
+    (storage.foldername(name))[1] = 'submissions' AND
+    (storage.foldername(name))[3] = get_auth_email()
+);
+
+-- 11.3 Certificates Bucket Policies (Student Read Own, Admin/Teacher Manage)
+DROP POLICY IF EXISTS "Certificates: Management" ON storage.objects;
+CREATE POLICY "Certificates: Management" ON storage.objects FOR ALL USING (
+    bucket_id = 'certificates' AND (is_teacher() OR is_admin())
+);
+
+DROP POLICY IF EXISTS "Certificates: Student Read Own" ON storage.objects;
+CREATE POLICY "Certificates: Student Read Own" ON storage.objects FOR SELECT USING (
+    bucket_id = 'certificates' AND (storage.foldername(name))[2] = get_auth_email()
+);
