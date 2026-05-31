@@ -1,3 +1,31 @@
+const BACKUP_CONFIG = {
+    version: '1.1.1',
+    tables: [
+        { name: 'users', onConflict: 'email' },
+        { name: 'courses', onConflict: 'id' },
+        { name: 'topics', onConflict: 'id' },
+        { name: 'lessons', onConflict: 'id' },
+        { name: 'materials', onConflict: 'id' },
+        { name: 'assignments', onConflict: 'id' },
+        { name: 'quizzes', onConflict: 'id' },
+        { name: 'live_classes', onConflict: 'id' },
+        { name: 'enrollments', onConflict: 'course_id,student_email' },
+        { name: 'submissions', onConflict: 'assignment_id,student_email' },
+        { name: 'quiz_submissions', onConflict: 'quiz_id,student_email,attempt_number' },
+        { name: 'attendance', onConflict: 'live_class_id,student_email' },
+        { name: 'discussions', onConflict: 'id' },
+        { name: 'notifications', onConflict: 'id' },
+        { name: 'broadcasts', onConflict: 'id' },
+        { name: 'planner', onConflict: 'id' },
+        { name: 'certificates', onConflict: 'id' },
+        { name: 'study_sessions', onConflict: 'id' },
+        { name: 'violations', onConflict: 'id' },
+        { name: 'invites', onConflict: 'token' },
+        { name: 'support_tickets', onConflict: 'id' },
+        { name: 'maintenance', onConflict: 'id' }
+    ]
+};
+
 async function renderDashboard() {
   SupabaseDB.deleteExpiredBroadcasts().catch(e => console.warn('Cleanup error:', e));
 
@@ -1312,26 +1340,18 @@ async function executeCleanup() {
 async function exportBackup() {
   UI.showNotification('Preparing full system backup...', 'info');
   try {
-    const tables = [
-        'users', 'courses', 'topics', 'lessons', 'materials',
-        'assignments', 'quizzes', 'live_classes', 'submissions',
-        'quiz_submissions', 'attendance', 'enrollments', 'discussions',
-        'notifications', 'broadcasts', 'planner', 'certificates',
-        'study_sessions', 'violations', 'invites', 'support_tickets',
-        'maintenance'
-    ];
     const backupData = {
         exportedAt: new Date().toISOString(),
-        version: '1.1.1',
+        version: BACKUP_CONFIG.version,
         tables: {}
     };
 
-    const fetchPromises = tables.map(async table => {
+    const fetchPromises = BACKUP_CONFIG.tables.map(async config => {
         try {
-            backupData.tables[table] = await SupabaseDB.getAllTableData(table);
+            backupData.tables[config.name] = await SupabaseDB.getAllTableData(config.name);
         } catch (err) {
-            console.warn(`Failed to export table ${table}:`, err);
-            backupData.tables[table] = [];
+            console.warn(`Failed to export table ${config.name}:`, err);
+            backupData.tables[config.name] = [];
         }
     });
 
@@ -1349,6 +1369,20 @@ async function exportBackup() {
   }
 }
 
+function validateBackup(data) {
+    if (!data || typeof data !== 'object') return 'Invalid backup format: Not an object.';
+    if (!data.tables || typeof data.tables !== 'object') return 'Invalid backup format: Missing tables data.';
+
+    // Version check (allow minor differences but warn or block major ones)
+    if (data.version) {
+        const [major] = data.version.split('.');
+        const [sysMajor] = BACKUP_CONFIG.version.split('.');
+        if (major !== sysMajor) return `Incompatible backup version: System is v${BACKUP_CONFIG.version}, Backup is v${data.version}`;
+    }
+
+    return null;
+}
+
 async function importBackup(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -1356,35 +1390,43 @@ async function importBackup(event) {
   reader.onload = async (e) => {
     try {
       const data = JSON.parse(e.target.result);
+
+      const validationError = validateBackup(data);
+      if (validationError) {
+          return UI.showNotification(validationError, 'error');
+      }
+
       const tables = data.tables || {};
       const tableList = Object.keys(tables);
 
       if (await UI.confirm(`Restore data from ${tableList.length} tables? This may overwrite existing records.`, 'System Restore')) {
         UI.showLoading('mgt-area', 'Restoring system data...');
 
-        // Restoration logic with dependency awareness
-        const IMPORT_ORDER = [
-            'users', 'courses', 'topics', 'lessons', 'materials',
-            'assignments', 'quizzes', 'live_classes', 'enrollments', 'submissions',
-            'quiz_submissions', 'attendance', 'discussions', 'notifications',
-            'broadcasts', 'planner', 'certificates', 'study_sessions', 'violations',
-            'invites', 'support_tickets', 'maintenance'
-        ];
-
-        // Sort tableList based on IMPORT_ORDER to respect foreign keys
-        const sortedTables = tableList.sort((a, b) => {
-            const indexA = IMPORT_ORDER.indexOf(a);
-            const indexB = IMPORT_ORDER.indexOf(b);
-            return (indexA === -1 ? 99 : indexA) - (indexB === -1 ? 99 : indexB);
-        });
+        // Order tables based on BACKUP_CONFIG to respect foreign keys
+        const sortedTables = BACKUP_CONFIG.tables
+            .filter(config => tableList.includes(config.name));
 
         const batchSize = 25;
-        for (const table of sortedTables) {
+        for (const config of sortedTables) {
+            const table = config.name;
             const records = (tables[table] || []).map(record => {
-                // Remove joined relationship properties to prevent PGRST204 errors during upsert
+                // Robust sanitization: Remove any non-primitive values that aren't part of the schema
+                // Joined relationships appear as objects/arrays in PostgREST output and cause PGRST204 errors.
                 const sanitized = { ...record };
-                const relationships = ['users', 'courses', 'topics', 'lessons', 'assignments', 'quizzes', 'live_classes'];
-                relationships.forEach(rel => delete sanitized[rel]);
+                const jsonbColumns = [
+                    'questions', 'attachments', 'completed_lessons', 'metadata',
+                    'reset_request', 'notification_preferences', 'answers',
+                    'question_scores', 'question_feedback', 'recurring_config',
+                    'analytics', 'schedules', 'allowed_extensions', 'anti_cheat_config'
+                ];
+
+                Object.keys(sanitized).forEach(key => {
+                    const value = sanitized[key];
+                    // If it's an object/array and NOT a known JSONB column, delete it.
+                    if (value !== null && typeof value === 'object' && !jsonbColumns.includes(key)) {
+                        delete sanitized[key];
+                    }
+                });
                 return sanitized;
             });
 
@@ -1392,19 +1434,13 @@ async function importBackup(event) {
 
             for (let i = 0; i < records.length; i += batchSize) {
                 const batch = records.slice(i, i + batchSize);
-                let query = supabaseClient.from(table);
+                const { error } = await supabaseClient
+                    .from(table)
+                    .upsert(batch, { onConflict: config.onConflict });
 
-                // Set explicit onConflict targets for composite keys
-                const options = {};
-                if (table === 'enrollments') options.onConflict = 'course_id,student_email';
-                if (table === 'submissions') options.onConflict = 'assignment_id,student_email';
-                if (table === 'quiz_submissions') options.onConflict = 'quiz_id,student_email,attempt_number';
-                if (table === 'attendance') options.onConflict = 'live_class_id,student_email';
-
-                const { error } = await query.upsert(batch, options);
                 if (error) {
-                    console.error(`Upsert failed for table ${table}:`, error);
-                    throw error;
+                    console.error(`Upsert failed for table ${table} at batch ${i}:`, error);
+                    throw new Error(`Error in table "${table}": ${error.message}`);
                 }
             }
         }

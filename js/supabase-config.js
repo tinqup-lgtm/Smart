@@ -1370,10 +1370,27 @@ class SupabaseDB {
     // Backup helper
     static async getAllTableData(table) {
         return this._request(async () => {
-            const { data, error } = await supabaseClient
+            // Handle tables with different timestamp column names for ordering
+            let orderCol = 'created_at';
+            if (table === 'enrollments') orderCol = 'enrolled_at';
+            else if (table === 'submissions') orderCol = 'submitted_at';
+            else if (table === 'quiz_submissions') orderCol = 'started_at';
+            else if (table === 'study_sessions') orderCol = 'started_at';
+            else if (table === 'certificates') orderCol = 'issued_at';
+            else if (table === 'user_secrets') orderCol = 'updated_at';
+
+            let { data, error } = await supabaseClient
                 .from(table)
                 .select('*')
-                .order('created_at', { ascending: true, nullsFirst: true });
+                .order(orderCol, { ascending: true, nullsFirst: true });
+
+            // If column doesn't exist (PGRST100) or other ordering error, try without order
+            if (error && (error.code === 'PGRST100' || error.message?.includes('column') || error.message?.includes('order'))) {
+                const retry = await supabaseClient.from(table).select('*');
+                data = retry.data;
+                error = retry.error;
+            }
+
             if (error) throw error;
             return data || [];
         });
