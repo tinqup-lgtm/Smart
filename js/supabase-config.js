@@ -14,8 +14,8 @@ const clientOptions = {
     global: {
         fetch: (url, options) => {
             const sid = sessionStorage.getItem('sessionId');
-            // Only inject sid if it matches the activated session to avoid auth regressions
-            if (sid && sid === _lastSessionId) {
+            // Inject sid if it exists in sessionStorage
+            if (sid) {
                 options = options || {};
                 const headers = new Headers(options.headers || {});
                 headers.set('x-session-id', sid);
@@ -28,29 +28,32 @@ const clientOptions = {
         persistSession: false,
         autoRefreshToken: false,
         detectSessionInUrl: false
+    },
+    realtime: {
+        headers: {
+            'x-session-id': sessionStorage.getItem('sessionId')
+        }
     }
 };
 
 const supabaseClient = createClient ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, clientOptions) : null;
 window.supabaseClient = supabaseClient;
 
-// Track last initialized session
-let _lastSessionId = sessionStorage.getItem('sessionId');
-
 /**
  * Updates the Supabase client session context.
  * The custom fetch function will automatically pick up the new ID from sessionStorage.
  */
 function setSupabaseSession(sessionId) {
-    if (sessionId === _lastSessionId) return;
-
     if (sessionId) {
         sessionStorage.setItem('sessionId', sessionId);
     } else {
         sessionStorage.removeItem('sessionId');
     }
 
-    _lastSessionId = sessionId;
+    // Update realtime headers for existing client
+    if (supabaseClient && supabaseClient.realtime) {
+        supabaseClient.realtime.setAuth(sessionId);
+    }
 }
 window.setSupabaseSession = setSupabaseSession;
 
@@ -1866,10 +1869,6 @@ class SessionManager {
 
         sessionStorage.removeItem('currentUser');
         sessionStorage.removeItem('sessionId');
-        // Reset the internal guard to allow re-initialization on next login
-        if (typeof _lastSessionId !== 'undefined') {
-            _lastSessionId = null;
-        }
         if (typeof window.setSupabaseSession === 'function') {
             window.setSupabaseSession(null);
         }
