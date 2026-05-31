@@ -101,9 +101,9 @@ window.generateTempPassword = function() {
     return pwd.join('');
 };
 
-window.updatePasswordStrength = function(password) {
-    const meter = document.getElementById('passwordStrength');
-    const container = document.getElementById('passwordStrengthContainer');
+window.updatePasswordStrength = function(password, meterId = 'passwordStrength', containerId = 'passwordStrengthContainer') {
+    const meter = document.getElementById(meterId);
+    const container = document.getElementById(containerId);
     if (!meter || !container) return;
 
     if (!password) {
