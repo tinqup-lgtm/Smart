@@ -15,7 +15,7 @@ BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$ language 'plpgsql' SECURITY DEFINER;
 
 -- 1. Tables Creation (With all columns integrated)
 
@@ -351,26 +351,31 @@ CREATE TABLE IF NOT EXISTS support_tickets (
 
 -- 2. Migrations for existing tables (Idempotent)
 
--- Separate top-level ALTER statements to ensure columns exist for subsequent script parsing
-ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
-ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '30 days');
-ALTER TABLE notifications ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '90 days');
-ALTER TABLE quiz_submissions ADD COLUMN IF NOT EXISTS attempt_number INTEGER;
-ALTER TABLE quiz_submissions ALTER COLUMN attempt_number DROP NOT NULL;
-ALTER TABLE quiz_submissions ALTER COLUMN status SET DEFAULT 'in-progress';
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS assessment_id UUID;
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS assessment_type VARCHAR(50);
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS type VARCHAR(100);
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS browser VARCHAR(100);
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS device VARCHAR(50);
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS os VARCHAR(50);
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS elapsed_time INTEGER;
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS score INTEGER;
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS severity VARCHAR(20);
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
-ALTER TABLE violations DROP COLUMN IF EXISTS details;
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW();
-ALTER TABLE violations ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '90 days');
+DO $$
+BEGIN
+    -- Separate top-level ALTER statements inside DO block to ensure columns exist for subsequent script parsing
+    ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
+    ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '30 days');
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '90 days');
+    ALTER TABLE quiz_submissions ADD COLUMN IF NOT EXISTS attempt_number INTEGER;
+    ALTER TABLE quiz_submissions ALTER COLUMN attempt_number DROP NOT NULL;
+    ALTER TABLE quiz_submissions ALTER COLUMN status SET DEFAULT 'in-progress';
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS assessment_id UUID;
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS assessment_type VARCHAR(50);
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS type VARCHAR(100);
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS browser VARCHAR(100);
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS device VARCHAR(50);
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS os VARCHAR(50);
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS elapsed_time INTEGER;
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS score INTEGER;
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS severity VARCHAR(20);
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+    ALTER TABLE violations DROP COLUMN IF EXISTS details;
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+    ALTER TABLE violations ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '90 days');
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'Migration step failed: %', SQLERRM;
+END $$;
 
 -- Fix quiz_submissions status check constraint if it was incorrectly initialized
 DO $$
@@ -609,7 +614,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_live_class_event ON live_classes;
 CREATE TRIGGER tr_live_class_event AFTER INSERT OR UPDATE ON live_classes FOR EACH ROW EXECUTE PROCEDURE tr_notify_live_class();
@@ -621,7 +626,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_assignment_published ON assignments;
 CREATE TRIGGER tr_assignment_published AFTER INSERT OR UPDATE ON assignments FOR EACH ROW EXECUTE PROCEDURE tr_notify_assignment();
@@ -633,7 +638,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_quiz_published ON quizzes;
 CREATE TRIGGER tr_quiz_published AFTER INSERT OR UPDATE ON quizzes FOR EACH ROW EXECUTE PROCEDURE tr_notify_quiz();
@@ -650,7 +655,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_submission_received ON submissions;
 CREATE TRIGGER tr_submission_received AFTER INSERT OR UPDATE ON submissions FOR EACH ROW EXECUTE PROCEDURE tr_notify_submission();
@@ -662,7 +667,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_grade_posted ON submissions;
 CREATE TRIGGER tr_grade_posted AFTER INSERT OR UPDATE ON submissions FOR EACH ROW EXECUTE PROCEDURE tr_notify_grade();
@@ -672,7 +677,7 @@ BEGIN
   SELECT full_name INTO NEW.created_by FROM users WHERE email = NEW.teacher_email;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_course_teacher_name_sync ON courses;
 CREATE TRIGGER tr_course_teacher_name_sync
@@ -686,7 +691,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_users_teacher_name_sync ON users;
 CREATE TRIGGER tr_users_teacher_name_sync
@@ -713,7 +718,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_course_owner_sync_children ON courses;
 CREATE TRIGGER tr_course_owner_sync_children
@@ -746,7 +751,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_topic_data_inherit ON topics;
 CREATE TRIGGER tr_topic_data_inherit BEFORE INSERT ON topics FOR EACH ROW EXECUTE PROCEDURE tr_inherit_course_data();
@@ -1049,6 +1054,14 @@ CREATE INDEX IF NOT EXISTS idx_study_sessions_teacher_email ON study_sessions(te
 CREATE INDEX IF NOT EXISTS idx_violations_course_id ON violations(course_id);
 CREATE INDEX IF NOT EXISTS idx_violations_teacher_email ON violations(teacher_email);
 CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by);
+
+-- Support Tickets Indexes
+CREATE INDEX IF NOT EXISTS idx_support_tickets_user_email ON support_tickets(user_email);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON support_tickets(status);
+
+-- Notification/Broadcast Sorting Optimization
+CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_email, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_broadcasts_course_role ON broadcasts(course_id, target_role);
 
 -- Index for performant RLS identity resolution
 CREATE INDEX IF NOT EXISTS idx_user_secrets_session_id ON user_secrets(session_id);
@@ -1941,7 +1954,90 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, postgres, se
 GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, postgres, service_role;
 
 -- 10. Storage Initialization
+-- 10. Realtime Enablement (Safe & Idempotent)
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        CREATE PUBLICATION supabase_realtime;
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'Publication supabase_realtime already exists or could not be created';
+END $$;
+
+DO $$
+DECLARE
+    v_table text;
+    v_tables text[] := ARRAY['notifications', 'quiz_submissions', 'submissions', 'live_classes', 'broadcasts', 'maintenance'];
+BEGIN
+    FOREACH v_table IN ARRAY v_tables LOOP
+        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = v_table) AND
+           NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = v_table) THEN
+            EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE %I', v_table);
+        END IF;
+    END LOOP;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'Some tables might already be in the publication or could not be added';
+END $$;
+
+-- 11. Storage Initialization
+-- 11. Storage Initialization & Policies
 
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('materials', 'materials', true), ('assignments', 'assignments', true), ('certificates', 'certificates', true)
 ON CONFLICT (id) DO NOTHING;
+
+-- Enable RLS on storage.objects
+ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+
+-- 11.1 Materials Bucket Policies (Public Read, Teacher Manage)
+DROP POLICY IF EXISTS "Materials: Public Read" ON storage.objects;
+CREATE POLICY "Materials: Public Read" ON storage.objects FOR SELECT USING (bucket_id = 'materials');
+
+DROP POLICY IF EXISTS "Materials: Teacher Manage" ON storage.objects;
+CREATE POLICY "Materials: Teacher Manage" ON storage.objects FOR ALL USING (
+    bucket_id = 'materials' AND (is_teacher() OR is_admin())
+);
+
+-- 11.2 Assignments Bucket Policies (Restricted Access)
+DROP POLICY IF EXISTS "Assignments: Teacher Manage" ON storage.objects;
+CREATE POLICY "Assignments: Teacher Manage" ON storage.objects FOR ALL USING (
+    bucket_id = 'assignments' AND (is_teacher() OR is_admin())
+);
+
+DROP POLICY IF EXISTS "Assignments: Student View Templates" ON storage.objects;
+CREATE POLICY "Assignments: Student View Templates" ON storage.objects FOR SELECT USING (
+    bucket_id = 'assignments' AND (storage.foldername(name))[1] = 'templates'
+);
+
+DROP POLICY IF EXISTS "Assignments: Student View Own" ON storage.objects;
+CREATE POLICY "Assignments: Student View Own" ON storage.objects FOR SELECT USING (
+    bucket_id = 'assignments' AND
+    (storage.foldername(name))[1] = 'submissions' AND
+    (storage.foldername(name))[3] = get_auth_email()
+);
+
+DROP POLICY IF EXISTS "Assignments: Student Upload Own" ON storage.objects;
+CREATE POLICY "Assignments: Student Upload Own" ON storage.objects FOR INSERT WITH CHECK (
+    bucket_id = 'assignments' AND
+    (storage.foldername(name))[1] = 'submissions' AND
+    (storage.foldername(name))[3] = get_auth_email()
+);
+
+DROP POLICY IF EXISTS "Assignments: Student Delete Own" ON storage.objects;
+CREATE POLICY "Assignments: Student Delete Own" ON storage.objects FOR DELETE USING (
+    bucket_id = 'assignments' AND
+    (storage.foldername(name))[1] = 'submissions' AND
+    (storage.foldername(name))[3] = get_auth_email()
+);
+
+-- 11.3 Certificates Bucket Policies (Student Read Own, Admin/Teacher Manage)
+DROP POLICY IF EXISTS "Certificates: Management" ON storage.objects;
+CREATE POLICY "Certificates: Management" ON storage.objects FOR ALL USING (
+    bucket_id = 'certificates' AND (is_teacher() OR is_admin())
+);
+
+DROP POLICY IF EXISTS "Certificates: Student Read Own" ON storage.objects;
+CREATE POLICY "Certificates: Student Read Own" ON storage.objects FOR SELECT USING (
+    bucket_id = 'certificates' AND (storage.foldername(name))[2] = get_auth_email()
+);
