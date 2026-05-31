@@ -318,6 +318,13 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    const newPassInput = document.getElementById('newPass');
+    if (newPassInput) {
+        newPassInput.addEventListener('input', (e) => {
+            window.updatePasswordStrength(e.target.value, 'newPasswordStrength', 'newPasswordStrengthContainer');
+        });
+    }
+
     // ---- Signup ----
     const signupForm = document.getElementById('signupForm');
     if (signupForm) {
@@ -382,7 +389,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         return;
                     }
                     if (existing.reset_request.status === 'approved') {
-                        errorEl.innerHTML = 'This account has an approved password reset. Please use the temporary password provided by your administrator to login.';
+                        errorEl.innerHTML = `This account has an approved password reset. Please use the temporary password provided by your administrator to login: <br><strong style="font-family:monospace; letter-spacing:1px">${escapeHtml(existing.reset_request.temp_password_plain)}</strong>`;
                         return;
                     }
                 }
@@ -498,7 +505,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (passErr) passErr.innerText = 'Temporary password expired. Please request a new reset.';
                         return;
                     }
-
+                    // Explicitly pass temp password in session for potential UI checks
+                    if (user.reset_request.temp_password_plain) {
+                         sessionStorage.setItem('lastApprovedTemp', user.reset_request.temp_password_plain);
+                    }
                 }
             }
 
@@ -525,10 +535,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Handle approved reset redirection
                 if (authUser.reset_request && authUser.reset_request.status === 'approved') {
+                    // Cache the plain text temp password if available for reuse in new password screen
+                    if (authUser.reset_request.temp_password_plain) {
+                        sessionStorage.setItem('lastApprovedTemp', authUser.reset_request.temp_password_plain);
+                    }
                     Auth.showNewPassword();
                     return;
                 }
 
+                // If user was in approved reset state but somehow bypassed or finished,
+                // we ensure they are clean.
                 alert(`Welcome back ${authUser.full_name}!`);
                 Auth.redirectByRole(authUser.role);
 
@@ -622,23 +638,35 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             if (!isStrongPassword(newPass)) {
-                if (err) err.innerText = 'Password must be at least 8 chars, include upper, lower, number, and special char.';
+                if (err) err.innerText = 'Password must be at least 8 characters long and include an uppercase letter, a lowercase letter, a number, and a special character.';
+                return;
+            }
+
+            // Prevent using the same temporary password
+            const hashedNew = await window.hashPassword(newPass, freshUser.email);
+            const lastTemp = sessionStorage.getItem('lastApprovedTemp');
+            if (hashedNew === freshUser.reset_request.temp_password || (lastTemp && newPass === lastTemp)) {
+                if (err) err.innerText = 'New password cannot be the same as your temporary password.';
                 return;
             }
 
             // Update password and clear reset request
-            freshUser.password = await window.hashPassword(newPass, freshUser.email);
+            freshUser.password = hashedNew;
             freshUser.reset_request = null;
 
-            // After updating the password, generate a fresh session ID
-            const sid = SessionManager.getSessionId(true);
+            // Prepare fresh session ID but do NOT set it in sessionStorage yet (avoid RLS authorization failure)
+            const sid = 's_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
             freshUser.session_id = sid;
             freshUser.metadata = { ...(freshUser.metadata || {}), last_invalidation_reason: 'password_change' };
 
-            // Persist changes and get authoritative user object
+            // Persist changes using the current valid (temporary gateway) session
             const updatedUser = await SupabaseDB.saveUser(freshUser);
+            if (!updatedUser) {
+                if (err) err.innerText = 'Failed to update password. Please try again.';
+                return;
+            }
 
-            // Establish RLS session context and persist updated user data
+            // ONLY AFTER successful persistence, establish the new RLS session context
             window.setSupabaseSession(sid);
             await SessionManager.setCurrentUser(updatedUser);
 
@@ -654,6 +682,7 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('Password successfully reset. You MUST now login with your new permanent password.');
 
             // Force re-authentication by clearing the temporary gateway session
+            sessionStorage.removeItem('lastApprovedTemp');
             await SessionManager.clearCurrentUser('password_change');
             Auth.showLogin();
         });
