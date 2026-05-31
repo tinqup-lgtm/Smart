@@ -483,6 +483,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             if (user.reset_request) {
+                if (user.reset_request.status === 'denied') {
+                    if (passErr) passErr.innerText = `Reset Request Denied: ${user.reset_request.denial_reason || 'No reason provided.'}`;
+                    return;
+                }
                 if (user.reset_request.status === 'pending') {
                     if (passErr) passErr.innerText = 'Password reset request pending admin review.';
                     return;
@@ -647,7 +651,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 'password_updated'
             );
 
-            alert('Password successfully reset. You can now login with your new password.');
+            alert('Password successfully reset. You MUST now login with your new permanent password.');
+
+            // Force re-authentication by clearing the temporary gateway session
+            await SessionManager.clearCurrentUser('password_change');
             Auth.showLogin();
         });
     }

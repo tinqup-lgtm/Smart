@@ -1108,28 +1108,27 @@ CREATE INDEX IF NOT EXISTS idx_violations_metadata_gin ON violations USING GIN (
 -- 7. Helper Functions
 
 -- Auth helpers strictly using Custom x-session-id header
-CREATE OR REPLACE FUNCTION get_auth_email() RETURNS VARCHAR AS $$
+
+-- Raw helpers that bypass reset-state blocking (Internal use only)
+CREATE OR REPLACE FUNCTION get_auth_email_raw() RETURNS VARCHAR AS $$
 DECLARE
   v_email VARCHAR;
   v_session_id VARCHAR;
 BEGIN
-  -- Use custom x-session-id header (Custom SessionManager)
   v_session_id := current_setting('request.headers', true)::jsonb->>'x-session-id';
   IF v_session_id IS NOT NULL THEN
     SELECT email INTO v_email FROM user_secrets WHERE session_id = v_session_id;
     RETURN v_email;
   END IF;
-
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
-CREATE OR REPLACE FUNCTION get_auth_role() RETURNS VARCHAR AS $$
+CREATE OR REPLACE FUNCTION get_auth_role_raw() RETURNS VARCHAR AS $$
 DECLARE
   v_role VARCHAR;
   v_session_id VARCHAR;
 BEGIN
-  -- Use custom x-session-id header
   v_session_id := current_setting('request.headers', true)::jsonb->>'x-session-id';
   IF v_session_id IS NOT NULL THEN
     SELECT u.role INTO v_role
@@ -1138,7 +1137,43 @@ BEGIN
     WHERE s.session_id = v_session_id;
     RETURN v_role;
   END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
+-- Public helpers with mandatory reset blocking
+-- Returns NULL if user has an active 'approved' password reset (gateway state)
+CREATE OR REPLACE FUNCTION get_auth_email() RETURNS VARCHAR AS $$
+DECLARE
+  v_email VARCHAR;
+  v_reset_status TEXT;
+BEGIN
+  v_email := get_auth_email_raw();
+  IF v_email IS NOT NULL THEN
+    SELECT reset_request->>'status' INTO v_reset_status FROM users WHERE email = v_email;
+    IF v_reset_status = 'approved' THEN
+        RETURN NULL; -- Block access during mandatory reset window
+    END IF;
+    RETURN v_email;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION get_auth_role() RETURNS VARCHAR AS $$
+DECLARE
+  v_email VARCHAR;
+  v_role VARCHAR;
+  v_reset_status TEXT;
+BEGIN
+  v_email := get_auth_email_raw();
+  IF v_email IS NOT NULL THEN
+    SELECT role, reset_request->>'status' INTO v_role, v_reset_status FROM users WHERE email = v_email;
+    IF v_reset_status = 'approved' THEN
+        RETURN NULL; -- Block access during mandatory reset window
+    END IF;
+    RETURN v_role;
+  END IF;
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
@@ -1359,7 +1394,8 @@ CREATE OR REPLACE FUNCTION update_user_secret_secure(
 ) RETURNS VOID AS $$
 BEGIN
     -- Check permissions: User can only update own secret unless admin
-    IF NOT (is_admin() OR get_auth_email() = p_email) THEN
+    -- Uses get_auth_email_raw() to allow password updates during gateway window
+    IF NOT (is_admin() OR get_auth_email_raw() = p_email) THEN
         RAISE EXCEPTION 'Unauthorized to update secrets for this user.';
     END IF;
 
@@ -1399,7 +1435,8 @@ BEGIN
     END IF;
 
     -- Only include session_id if requester is admin or the user themselves
-    IF (is_admin() OR get_auth_email() = p_email) THEN
+    -- Uses get_auth_email_raw() to allow self-profile access during gateway window
+    IF (is_admin() OR get_auth_email_raw() = p_email) THEN
         SELECT session_id INTO v_session_id FROM user_secrets WHERE email = p_email;
     END IF;
 
@@ -1680,6 +1717,14 @@ BEGIN
     DELETE FROM broadcasts WHERE expires_at < NOW();
     DELETE FROM notifications WHERE created_at < (NOW() - INTERVAL '60 days') AND is_read = TRUE;
     DELETE FROM violations WHERE expires_at < NOW();
+
+    -- Automatically clear expired password reset requests (24h window)
+    UPDATE users
+    SET reset_request = NULL
+    WHERE reset_request IS NOT NULL
+    AND reset_request->>'expires_at' IS NOT NULL
+    AND (reset_request->>'expires_at')::TIMESTAMP WITH TIME ZONE < NOW();
+
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
@@ -1796,7 +1841,7 @@ CREATE POLICY "Secrets: No Public Access" ON user_secrets FOR ALL USING (false);
 DROP POLICY IF EXISTS "Users: Select" ON users;
 CREATE POLICY "Users: Select" ON users FOR SELECT USING (true);
 DROP POLICY IF EXISTS "Users: Update" ON users;
-CREATE POLICY "Users: Update" ON users FOR UPDATE USING (email = get_auth_email() OR is_admin());
+CREATE POLICY "Users: Update" ON users FOR UPDATE USING (email = get_auth_email_raw() OR is_admin());
 DROP POLICY IF EXISTS "Users: No Direct Insert" ON users;
 DROP POLICY IF EXISTS "Users: Admin Manage" ON users;
 CREATE POLICY "Users: Admin Manage" ON users FOR ALL USING (is_admin());

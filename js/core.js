@@ -64,7 +64,7 @@ window.isStrongPassword = function(pass) {
 /**
  * Generates a secure temporary password meeting strength requirements.
  * Includes exactly one special character, uppercase, lowercase, and numbers.
- * Minimum 10 characters for added security.
+ * Fixed length of 8 characters per business rules.
  */
 window.generateTempPassword = function() {
     const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -86,9 +86,9 @@ window.generateTempPassword = function() {
         getRandom(specials)
     ];
 
-    // Fill remaining to reach length 10 using alphanumeric only to keep special char count at exactly one
+    // Fill remaining to reach length 8 using alphanumeric only to keep special char count at exactly one
     const alphanumeric = upper + lower + nums;
-    while (pwd.length < 10) {
+    while (pwd.length < 8) {
         pwd.push(getRandom(alphanumeric));
     }
 
