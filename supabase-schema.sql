@@ -1735,10 +1735,9 @@ END $$;
 
 -- 0. User Secrets (Strictly restricted)
 -- 0. User Secrets
--- 0. User Secrets (Strictly restricted)
 DROP POLICY IF EXISTS "Secrets: No Public Access" ON user_secrets;
 DROP POLICY IF EXISTS "Secrets: Admin Manage" ON user_secrets;
-CREATE POLICY "Secrets: No Public Access" ON user_secrets FOR ALL USING (false);
+CREATE POLICY "Secrets: Admin Manage" ON user_secrets FOR ALL USING (is_admin());
 
 -- 1. Users Table
 DROP POLICY IF EXISTS "Users: Select" ON users;
