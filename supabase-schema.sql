@@ -2080,7 +2080,8 @@ VALUES ('materials', 'materials', true), ('assignments', 'assignments', true), (
 ON CONFLICT (id) DO NOTHING;
 
 -- Enable RLS on storage.objects
-ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+-- Enable RLS on storage.objects (Note: Must be owner or superuser)
+-- ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 
 -- 11.1 Materials Bucket Policies (Public Read, Teacher Manage)
 DROP POLICY IF EXISTS "Materials: Public Read" ON storage.objects;
