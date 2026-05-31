@@ -5,10 +5,10 @@ const BACKUP_CONFIG = {
         { name: 'courses', onConflict: 'id' },
         { name: 'topics', onConflict: 'id' },
         { name: 'lessons', onConflict: 'id' },
-        { name: 'materials', onConflict: 'id' },
         { name: 'assignments', onConflict: 'id' },
         { name: 'quizzes', onConflict: 'id' },
         { name: 'live_classes', onConflict: 'id' },
+        { name: 'materials', onConflict: 'id' },
         { name: 'enrollments', onConflict: 'course_id,student_email' },
         { name: 'submissions', onConflict: 'assignment_id,student_email' },
         { name: 'quiz_submissions', onConflict: 'quiz_id,student_email,attempt_number' },
@@ -1384,9 +1384,13 @@ function validateBackup(data) {
     return null;
 }
 
+let _isRestoring = false;
 async function importBackup(event) {
+  if (_isRestoring) return UI.showNotification('A restore operation is already in progress.', 'warn');
+
   const file = event.target.files[0];
   if (!file) return;
+
   const reader = new FileReader();
   reader.onload = async (e) => {
     try {
@@ -1401,6 +1405,7 @@ async function importBackup(event) {
       const tableList = Object.keys(tables);
 
       if (await UI.confirm(`Restore data from ${tableList.length} tables? This may overwrite existing records.`, 'System Restore')) {
+        _isRestoring = true;
         UI.showLoading('mgt-area', 'Restoring system data...');
 
         // Order tables based on BACKUP_CONFIG to respect foreign keys
@@ -1410,37 +1415,24 @@ async function importBackup(event) {
         const batchSize = 25;
         for (const config of sortedTables) {
             const table = config.name;
-            const records = (tables[table] || []).map(record => {
-                // Robust sanitization: Remove any non-primitive values that aren't part of the schema
-                // Joined relationships appear as objects/arrays in PostgREST output and cause PGRST204 errors.
-                const sanitized = { ...record };
-                const jsonbColumns = [
-                    'questions', 'attachments', 'completed_lessons', 'metadata',
-                    'reset_request', 'notification_preferences', 'answers',
-                    'question_scores', 'question_feedback', 'recurring_config',
-                    'analytics', 'schedules', 'allowed_extensions', 'anti_cheat_config'
-                ];
+            const rawRecords = tables[table] || [];
 
-                Object.keys(sanitized).forEach(key => {
-                    const value = sanitized[key];
-                    // If it's an object/array and NOT a known JSONB column, delete it.
-                    if (value !== null && typeof value === 'object' && !jsonbColumns.includes(key)) {
-                        delete sanitized[key];
-                    }
-                });
-                return sanitized;
-            });
+            // Robust sanitization using centralized SupabaseDB logic
+            const sanitizedRecords = rawRecords.map(record => SupabaseDB._sanitizePayload(record));
 
-            if (records.length === 0) continue;
+            if (sanitizedRecords.length === 0) continue;
 
-            for (let i = 0; i < records.length; i += batchSize) {
-                const batch = records.slice(i, i + batchSize);
+            console.log(`Restoring table "${table}": ${sanitizedRecords.length} records...`);
+
+            for (let i = 0; i < sanitizedRecords.length; i += batchSize) {
+                const batch = sanitizedRecords.slice(i, i + batchSize);
                 const { error } = await supabaseClient
                     .from(table)
                     .upsert(batch, { onConflict: config.onConflict });
 
                 if (error) {
-                    console.error(`Upsert failed for table ${table} at batch ${i}:`, error);
+                    console.error(`Upsert failed for table "${table}" at batch index ${i}:`, error);
+                    console.error('Failed batch sample:', batch[0]);
                     throw new Error(`Error in table "${table}": ${error.message}`);
                 }
             }
@@ -1453,6 +1445,7 @@ async function importBackup(event) {
       console.error('Restore error:', err);
       UI.showNotification('Failed to restore backup: ' + err.message, 'error');
     } finally {
+        _isRestoring = false;
         UI.hideLoading('mgt-area');
         event.target.value = '';
     }
