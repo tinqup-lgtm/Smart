@@ -212,6 +212,8 @@ class SupabaseDB {
             notification_preferences: user.notification_preferences,
             metadata: user.metadata
         };
+        if (user.id) payload.id = user.id;
+        if (user.created_at) payload.created_at = user.created_at;
 
         const { data, error } = await supabaseClient
             .from('users')
@@ -1142,6 +1144,7 @@ class SupabaseDB {
         };
         // Only include ID if it is a valid UUID/truthy
         if (submission.id) payload.id = submission.id;
+        if (submission.created_at) payload.created_at = submission.created_at;
 
         const { data, error } = await supabaseClient
             .from('quiz_submissions')

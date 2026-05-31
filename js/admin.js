@@ -913,7 +913,7 @@ async function approveReset(email) {
 
       user.reset_request.status = 'approved';
       user.reset_request.temp_password = hashedTemp;
-      user.reset_request.expires_at = new Date(Date.now() + 72 * 3600 * 1000).toISOString();
+      user.reset_request.expires_at = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
 
       // Ensure user.password is also updated to the hashed temp password so login RPC works
       user.password = hashedTemp;
@@ -1313,11 +1313,12 @@ async function exportBackup() {
   UI.showNotification('Preparing full system backup...', 'info');
   try {
     const tables = [
-        'users', 'courses', 'lessons', 'materials', 'assignments', 'quizzes',
-        'live_classes', 'submissions', 'quiz_submissions', 'attendance',
-        'enrollments', 'discussions', 'notifications', 'broadcasts',
-        'planner', 'certificates', 'study_sessions', 'violations',
-        'invites', 'support_tickets', 'maintenance'
+        'users', 'courses', 'topics', 'lessons', 'materials',
+        'assignments', 'quizzes', 'live_classes', 'submissions',
+        'quiz_submissions', 'attendance', 'enrollments', 'discussions',
+        'notifications', 'broadcasts', 'planner', 'certificates',
+        'study_sessions', 'violations', 'invites', 'support_tickets',
+        'maintenance'
     ];
     const backupData = {
         exportedAt: new Date().toISOString(),
@@ -1361,22 +1362,49 @@ async function importBackup(event) {
       if (await UI.confirm(`Restore data from ${tableList.length} tables? This may overwrite existing records.`, 'System Restore')) {
         UI.showLoading('mgt-area', 'Restoring system data...');
 
-        // High-fidelity restoration logic
+        // Restoration logic with dependency awareness
+        const IMPORT_ORDER = [
+            'users', 'courses', 'topics', 'lessons', 'materials',
+            'assignments', 'quizzes', 'live_classes', 'enrollments', 'submissions',
+            'quiz_submissions', 'attendance', 'discussions', 'notifications',
+            'broadcasts', 'planner', 'certificates', 'study_sessions', 'violations',
+            'invites', 'support_tickets', 'maintenance'
+        ];
+
+        // Sort tableList based on IMPORT_ORDER to respect foreign keys
+        const sortedTables = tableList.sort((a, b) => {
+            const indexA = IMPORT_ORDER.indexOf(a);
+            const indexB = IMPORT_ORDER.indexOf(b);
+            return (indexA === -1 ? 99 : indexA) - (indexB === -1 ? 99 : indexB);
+        });
+
         const batchSize = 25;
-        for (const table of tableList) {
-            const records = tables[table] || [];
+        for (const table of sortedTables) {
+            const records = (tables[table] || []).map(record => {
+                // Remove joined relationship properties to prevent PGRST204 errors during upsert
+                const sanitized = { ...record };
+                const relationships = ['users', 'courses', 'topics', 'lessons', 'assignments', 'quizzes', 'live_classes'];
+                relationships.forEach(rel => delete sanitized[rel]);
+                return sanitized;
+            });
+
             if (records.length === 0) continue;
 
             for (let i = 0; i < records.length; i += batchSize) {
                 const batch = records.slice(i, i + batchSize);
-                if (table === 'users') {
-                    // Users require special handling to sync to secrets if password_hash exists
-                    await Promise.all(batch.map(r => {
-                        if (r.password_hash && !r.password) r.password = r.password_hash;
-                        return SupabaseDB.saveUser(r);
-                    }));
-                } else {
-                    await supabaseClient.from(table).upsert(batch);
+                let query = supabaseClient.from(table);
+
+                // Set explicit onConflict targets for composite keys
+                const options = {};
+                if (table === 'enrollments') options.onConflict = 'course_id,student_email';
+                if (table === 'submissions') options.onConflict = 'assignment_id,student_email';
+                if (table === 'quiz_submissions') options.onConflict = 'quiz_id,student_email,attempt_number';
+                if (table === 'attendance') options.onConflict = 'live_class_id,student_email';
+
+                const { error } = await query.upsert(batch, options);
+                if (error) {
+                    console.error(`Upsert failed for table ${table}:`, error);
+                    throw error;
                 }
             }
         }
