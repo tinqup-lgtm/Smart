@@ -1173,6 +1173,16 @@ class SupabaseDB {
         return data;
     }
 
+    static async requestPasswordReset(email, reason, customReason = '') {
+        const { data, error } = await supabaseClient.rpc('request_password_reset_secure', {
+            p_email: email,
+            p_reason: reason,
+            p_custom_reason: customReason
+        });
+        if (error) throw error;
+        return data;
+    }
+
     static async invokeFunction(name, payload) {
         const { data, error } = await supabaseClient.functions.invoke(name, {
             body: payload
@@ -1183,13 +1193,15 @@ class SupabaseDB {
 
     // Notification operations
     static async createNotification(userEmail, title, message, link = null, type = 'system') {
-        const { data, error } = await supabaseClient
-            .from('notifications')
-            .insert([{ user_email: userEmail, title, message, link, type }])
-            .select();
+        const { error } = await supabaseClient.rpc('notify_user', {
+            p_email: userEmail,
+            p_title: title,
+            p_message: message,
+            p_link: link,
+            p_type: type
+        });
         if (error) throw error;
         _cache.invalidate(`notifications_${userEmail}`);
-        return data?.[0];
     }
 
     static async getNotifications(userEmail, options = {}) {
