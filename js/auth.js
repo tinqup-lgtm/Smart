@@ -564,62 +564,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const user = await SupabaseDB.getUser(email);
-            if (!user) {
-                if (err) err.innerText = 'No account found with this email';
-                return;
-            }
-            if (!user.active) {
-                if (err) err.innerText = 'Your account has been deactivated.';
-                return;
-            }
-            if (user.flagged) {
-                if (err) err.innerText = 'Your account is flagged for suspicious activities. Contact admin for support.';
-                return;
-            }
-            if (isAccountLocked(user)) {
-                if (err) err.innerText = 'Your account is locked due to failed attempts. Try again later.';
-                return;
-            }
-
-            // Expire old reset automatically
-            if (user.reset_request && user.reset_request.expires_at && Date.now() > new Date(user.reset_request.expires_at).getTime()) {
-                user.reset_request = null;
-            }
-
-            if (user.reset_request) {
-                if (user.reset_request.status === 'pending') {
-                    if (err) err.innerText = 'Reset request already pending review.';
+            try {
+                const result = await SupabaseDB.requestPasswordReset(email, reason, customReason);
+                if (!result.success) {
+                    if (err) err.innerText = result.message;
                     return;
                 }
-                if (user.reset_request.status === 'approved') {
-                    if (err) err.innerHTML = 'Reset already approved. Use temporary password provided by administrator to login.';
-                    return;
-                }
+                alert(result.message);
+                Auth.showLogin();
+            } catch (e) {
+                console.error('Reset request error:', e);
+                if (err) err.innerText = 'An error occurred. Please try again later.';
             }
-
-            user.reset_request = {
-                status: 'pending',
-                reason: reason,
-                custom_reason: customReason,
-                temp_password: null,
-                created_at: new Date().toISOString(),
-                expires_at: null,
-                denial_reason: null
-            };
-
-            await Promise.all([
-                SupabaseDB.saveUser(user),
-                SupabaseDB.createNotification(
-                    user.email,
-                    'Reset Requested',
-                    'Password reset requested and pending admin review.',
-                    null,
-                    'reset_requested'
-                )
-            ]);
-            alert('Password reset request submitted. Admin will review it.');
-            Auth.showLogin();
         });
     }
 

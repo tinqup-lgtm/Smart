@@ -8,6 +8,16 @@ SET client_min_messages TO NOTICE;
 -- Extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- 0. Internal helper for notification creation (bypasses RLS)
+-- Defined early as it is used by triggers and RPCs
+CREATE OR REPLACE FUNCTION notify_user(p_email VARCHAR, p_title TEXT, p_message TEXT, p_link TEXT DEFAULT NULL, p_type TEXT DEFAULT 'system')
+RETURNS VOID AS $$
+BEGIN
+  INSERT INTO notifications (user_email, title, message, link, type)
+  VALUES (p_email, p_title, p_message, p_link, p_type);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- Utility Functions
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -1066,6 +1076,9 @@ CREATE INDEX IF NOT EXISTS idx_broadcasts_course_role ON broadcasts(course_id, t
 -- Index for performant RLS identity resolution
 CREATE INDEX IF NOT EXISTS idx_user_secrets_session_id ON user_secrets(session_id);
 
+-- Explicit FK Index for Topics
+CREATE INDEX IF NOT EXISTS idx_topics_course_id ON topics(course_id);
+
 -- Composite Indexes for Foreign Key Pairs & Common Lookups
 CREATE INDEX IF NOT EXISTS idx_enrollments_composite ON enrollments(course_id, student_email);
 CREATE INDEX IF NOT EXISTS idx_submissions_composite ON submissions(assignment_id, student_email);
@@ -1344,6 +1357,58 @@ RETURNS TIMESTAMP WITH TIME ZONE AS $$
   SELECT NOW();
 $$ LANGUAGE sql STABLE;
 
+-- Secure RPC for password reset request (unauthenticated)
+CREATE OR REPLACE FUNCTION request_password_reset_secure(
+    p_email VARCHAR,
+    p_reason TEXT,
+    p_custom_reason TEXT DEFAULT NULL
+) RETURNS JSONB AS $$
+DECLARE
+    v_user RECORD;
+BEGIN
+    SELECT * INTO v_user FROM users WHERE email = p_email;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Account not found');
+    END IF;
+
+    IF NOT v_user.active THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Account deactivated');
+    END IF;
+
+    IF v_user.flagged THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Account flagged');
+    END IF;
+
+    -- Check for existing pending/approved reset
+    IF v_user.reset_request IS NOT NULL AND
+       (v_user.reset_request->>'expires_at' IS NULL OR (v_user.reset_request->>'expires_at')::TIMESTAMP WITH TIME ZONE > NOW()) THEN
+
+        IF v_user.reset_request->>'status' = 'pending' THEN
+            RETURN jsonb_build_object('success', false, 'message', 'Reset request already pending review.');
+        ELSIF v_user.reset_request->>'status' = 'approved' THEN
+            RETURN jsonb_build_object('success', false, 'message', 'Reset already approved. Use temporary password provided by administrator.');
+        END IF;
+    END IF;
+
+    -- Update User
+    UPDATE users SET reset_request = jsonb_build_object(
+        'status', 'pending',
+        'reason', p_reason,
+        'custom_reason', p_custom_reason,
+        'temp_password', null,
+        'created_at', NOW(),
+        'expires_at', null,
+        'denial_reason', null
+    ) WHERE email = p_email;
+
+    -- Create Notification
+    PERFORM notify_user(p_email, 'Reset Requested', 'Password reset requested and pending admin review.', null, 'reset_requested');
+
+    RETURN jsonb_build_object('success', true, 'message', 'Password reset request submitted.');
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- 7b. Quiz Authoritative Logic RPCs
 
 -- Helper for centralized scoring
@@ -1597,13 +1662,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION notify_user(target_email VARCHAR, n_title TEXT, n_msg TEXT, n_link TEXT DEFAULT NULL, n_type TEXT DEFAULT 'system')
-RETURNS VOID AS $$
-BEGIN
-  INSERT INTO notifications (user_email, title, message, link, type)
-  VALUES (target_email, n_title, n_msg, n_link, n_type);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION broadcast_data(n_course_id UUID, n_role VARCHAR, n_title TEXT, n_msg TEXT, n_link TEXT DEFAULT NULL, n_type TEXT DEFAULT 'system', n_expires_in INTERVAL DEFAULT INTERVAL '30 days')
 RETURNS VOID AS $$
@@ -1661,7 +1719,7 @@ BEGIN
         SELECT table_name
         FROM information_schema.tables
         WHERE table_schema = 'public'
-        AND table_name IN ('users', 'user_secrets', 'courses', 'lessons', 'enrollments', 'assignments', 'submissions', 'live_classes', 'attendance', 'quizzes', 'quiz_submissions', 'materials', 'discussions', 'notifications', 'broadcasts', 'maintenance', 'planner', 'certificates', 'study_sessions', 'invites', 'violations', 'support_tickets')
+        AND table_name IN ('users', 'user_secrets', 'courses', 'topics', 'lessons', 'enrollments', 'assignments', 'submissions', 'live_classes', 'attendance', 'quizzes', 'quiz_submissions', 'materials', 'discussions', 'notifications', 'broadcasts', 'maintenance', 'planner', 'certificates', 'study_sessions', 'invites', 'violations', 'support_tickets')
     LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     END LOOP;
