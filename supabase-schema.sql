@@ -10,6 +10,8 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- 0. Internal helper for notification creation (bypasses RLS)
 -- Defined early as it is used by triggers and RPCs
+-- We drop it first to handle potential parameter name/type changes (ERROR 42P13)
+DROP FUNCTION IF EXISTS notify_user(VARCHAR, TEXT, TEXT, TEXT, TEXT) CASCADE;
 CREATE OR REPLACE FUNCTION notify_user(p_email VARCHAR, p_title TEXT, p_message TEXT, p_link TEXT DEFAULT NULL, p_type TEXT DEFAULT 'system')
 RETURNS VOID AS $$
 BEGIN
@@ -1380,6 +1382,10 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'message', 'Account flagged');
     END IF;
 
+    IF v_user.locked_until IS NOT NULL AND v_user.locked_until > NOW() THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Account locked until ' || v_user.locked_until);
+    END IF;
+
     -- Check for existing pending/approved reset
     IF v_user.reset_request IS NOT NULL AND
        (v_user.reset_request->>'expires_at' IS NULL OR (v_user.reset_request->>'expires_at')::TIMESTAMP WITH TIME ZONE > NOW()) THEN
@@ -2011,32 +2017,8 @@ GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, postgres, servi
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, postgres, service_role;
 GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, postgres, service_role;
 
--- 10. Storage Initialization
--- 10. Realtime Enablement (Safe & Idempotent)
-
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-        CREATE PUBLICATION supabase_realtime;
-    END IF;
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'Publication supabase_realtime already exists or could not be created';
-END $$;
-
-DO $$
-DECLARE
-    v_table text;
-    v_tables text[] := ARRAY['notifications', 'quiz_submissions', 'submissions', 'live_classes', 'broadcasts', 'maintenance'];
-BEGIN
-    FOREACH v_table IN ARRAY v_tables LOOP
-        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = v_table) AND
-           NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = v_table) THEN
-            EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE %I', v_table);
-        END IF;
-    END LOOP;
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'Some tables might already be in the publication or could not be added';
-END $$;
+-- 10. Realtime Cleanup
+DROP PUBLICATION IF EXISTS supabase_realtime;
 
 -- 11. Storage Initialization
 -- 11. Storage Initialization & Policies
