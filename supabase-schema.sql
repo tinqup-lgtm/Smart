@@ -1079,19 +1079,13 @@ CREATE INDEX IF NOT EXISTS idx_violations_metadata_gin ON violations USING GIN (
 
 -- 7. Helper Functions
 
--- Auth helpers supporting both JWT and Custom x-session-id header
+-- Auth helpers strictly using Custom x-session-id header
 CREATE OR REPLACE FUNCTION get_auth_email() RETURNS VARCHAR AS $$
 DECLARE
   v_email VARCHAR;
   v_session_id VARCHAR;
 BEGIN
-  -- 1. Try JWT claims (Standard Supabase Auth)
-  v_email := current_setting('request.jwt.claims', true)::jsonb->>'email';
-  IF v_email IS NOT NULL THEN
-    RETURN v_email;
-  END IF;
-
-  -- 2. Try custom x-session-id header (Custom SessionManager)
+  -- Use custom x-session-id header (Custom SessionManager)
   v_session_id := current_setting('request.headers', true)::jsonb->>'x-session-id';
   IF v_session_id IS NOT NULL THEN
     SELECT email INTO v_email FROM user_secrets WHERE session_id = v_session_id;
@@ -1107,13 +1101,7 @@ DECLARE
   v_role VARCHAR;
   v_session_id VARCHAR;
 BEGIN
-  -- 1. Try JWT claims
-  v_role := current_setting('request.jwt.claims', true)::jsonb->>'role';
-  IF v_role IS NOT NULL THEN
-    RETURN v_role;
-  END IF;
-
-  -- 2. Try custom x-session-id header
+  -- Use custom x-session-id header
   v_session_id := current_setting('request.headers', true)::jsonb->>'x-session-id';
   IF v_session_id IS NOT NULL THEN
     SELECT u.role INTO v_role

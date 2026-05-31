@@ -4,7 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-session-id',
 }
 
 serve(async (req) => {
@@ -23,47 +23,40 @@ serve(async (req) => {
 
     const supabaseClient = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Verify Authorization: Only allow authenticated admins to trigger broadcasts
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Missing Authorization header' }), {
+    // Verify Authorization: Strictly use custom x-session-id header
+    const sessionId = req.headers.get('x-session-id');
+    if (!sessionId) {
+      return new Response(JSON.stringify({ error: 'Missing x-session-id header' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 401,
       });
     }
 
-    // Since we use a custom session-based approach, we expect the Admin to provide their email and a valid session check.
-    // In a real production environment with Supabase Auth, we would use supabaseClient.auth.getUser(token).
-    // For this implementation, we will verify the user's role from the database.
-    const { data: { user }, error: authError } = await supabaseClient.auth.getUser(authHeader.replace('Bearer ', ''));
+    // Identify user and role from session ID
+    const { data: secretData, error: secretError } = await supabaseClient
+        .from('user_secrets')
+        .select('email')
+        .eq('session_id', sessionId)
+        .single();
 
-    if (authError || !user) {
-        // Fallback for custom session if Supabase Auth isn't fully utilized for the admin user
-        // We'll check the 'X-Admin-Email' header for now as a secondary verification
-        const adminEmail = req.headers.get('X-Admin-Email');
-        if (adminEmail) {
-            const { data: dbUser } = await supabaseClient.from('users').select('role').eq('email', adminEmail).single();
-            if (!dbUser || dbUser.role !== 'admin') {
-                return new Response(JSON.stringify({ error: 'Unauthorized: Admin privileges required' }), {
-                    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                    status: 403,
-                });
-            }
-        } else {
-            return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                status: 401,
-            });
-        }
-    } else {
-        // Verify role from metadata or database
-        const { data: dbUser } = await supabaseClient.from('users').select('role').eq('email', user.email).single();
-        if (!dbUser || dbUser.role !== 'admin') {
-            return new Response(JSON.stringify({ error: 'Unauthorized: Admin privileges required' }), {
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                status: 403,
-            });
-        }
+    if (secretError || !secretData) {
+        return new Response(JSON.stringify({ error: 'Invalid session' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            status: 401,
+        });
+    }
+
+    const { data: userData, error: userError } = await supabaseClient
+        .from('users')
+        .select('role')
+        .eq('email', secretData.email)
+        .single();
+
+    if (userError || !userData || userData.role !== 'admin') {
+        return new Response(JSON.stringify({ error: 'Unauthorized: Admin privileges required' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            status: 403,
+        });
     }
 
     const { type, payload } = await req.json();
