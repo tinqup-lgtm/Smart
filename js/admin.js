@@ -913,7 +913,7 @@ async function approveReset(email) {
 
       user.reset_request.status = 'approved';
       user.reset_request.temp_password = hashedTemp;
-      user.reset_request.expires_at = new Date(Date.now() + 72 * 3600 * 1000).toISOString();
+      user.reset_request.expires_at = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
 
       // Ensure user.password is also updated to the hashed temp password so login RPC works
       user.password = hashedTemp;

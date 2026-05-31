@@ -1182,22 +1182,48 @@ BEGIN
 
   SELECT password_hash, session_id INTO v_secret FROM user_secrets WHERE email = p_email;
 
-  -- Lazy Secret Creation: If secret is missing, check for an approved reset request (First sign-in after import)
+  -- 1. Handle Missing Secrets (Lazy creation for imported users)
   IF NOT FOUND THEN
+      -- Strict Temp Password Check
       IF v_user.reset_request IS NOT NULL AND
          v_user.reset_request->>'status' = 'approved' AND
-         v_user.reset_request->>'temp_password' = p_password_hash THEN
+         v_user.reset_request->>'temp_password' = p_password_hash AND
+         (v_user.reset_request->>'expires_at')::TIMESTAMP WITH TIME ZONE > NOW() AND
+         (v_user.reset_request->>'login_used' IS NULL OR v_user.reset_request->>'login_used' = 'false') THEN
 
-          -- Create the missing secret
+          -- Create the missing secret (One-time gateway)
           INSERT INTO user_secrets (email, password_hash, session_id)
           VALUES (p_email, p_password_hash, p_session_id)
           RETURNING * INTO v_secret;
+
+          -- Mark reset request as used immediately to ensure one-time gateway behavior
+          UPDATE users SET reset_request = reset_request || '{"login_used": true}'::jsonb WHERE email = p_email;
       ELSE
           RETURN jsonb_build_object('success', false, 'message', 'Invalid password or account requires activation');
       END IF;
   END IF;
 
+  -- 2. Handle Existing Secrets (Regular or just-created gateway)
   IF v_secret.password_hash = p_password_hash THEN
+    -- Special Check: If the primary password matches the temp password in an active reset request,
+    -- enforce one-time gateway rules.
+    IF v_user.reset_request IS NOT NULL AND
+       v_user.reset_request->>'status' = 'approved' AND
+       v_user.reset_request->>'temp_password' = p_password_hash THEN
+
+        -- Enforce expiry and one-time use
+        IF (v_user.reset_request->>'expires_at')::TIMESTAMP WITH TIME ZONE < NOW() THEN
+             RETURN jsonb_build_object('success', false, 'message', 'Temporary password expired');
+        END IF;
+
+        IF (v_user.reset_request->>'login_used' = 'true') THEN
+             RETURN jsonb_build_object('success', false, 'message', 'Temporary password already used. Reset password to continue.');
+        END IF;
+
+        -- Mark as used for subsequent attempts
+        UPDATE users SET reset_request = reset_request || '{"login_used": true}'::jsonb WHERE email = p_email;
+    END IF;
+
     -- Update session and login stats
     UPDATE user_secrets SET session_id = p_session_id WHERE email = p_email;
     UPDATE users SET
