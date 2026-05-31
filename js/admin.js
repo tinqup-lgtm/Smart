@@ -1313,7 +1313,7 @@ async function exportBackup() {
   UI.showNotification('Preparing full system backup...', 'info');
   try {
     const tables = [
-        'users', 'user_secrets', 'courses', 'topics', 'lessons', 'materials',
+        'users', 'courses', 'topics', 'lessons', 'materials',
         'assignments', 'quizzes', 'live_classes', 'submissions',
         'quiz_submissions', 'attendance', 'enrollments', 'discussions',
         'notifications', 'broadcasts', 'planner', 'certificates',
@@ -1364,7 +1364,7 @@ async function importBackup(event) {
 
         // Restoration logic with dependency awareness
         const IMPORT_ORDER = [
-            'users', 'user_secrets', 'courses', 'topics', 'lessons', 'materials',
+            'users', 'courses', 'topics', 'lessons', 'materials',
             'assignments', 'quizzes', 'live_classes', 'enrollments', 'submissions',
             'quiz_submissions', 'attendance', 'discussions', 'notifications',
             'broadcasts', 'planner', 'certificates', 'study_sessions', 'violations',

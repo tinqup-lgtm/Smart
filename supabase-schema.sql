@@ -1182,6 +1182,21 @@ BEGIN
 
   SELECT password_hash, session_id INTO v_secret FROM user_secrets WHERE email = p_email;
 
+  -- Lazy Secret Creation: If secret is missing, check for an approved reset request (First sign-in after import)
+  IF NOT FOUND THEN
+      IF v_user.reset_request IS NOT NULL AND
+         v_user.reset_request->>'status' = 'approved' AND
+         v_user.reset_request->>'temp_password' = p_password_hash THEN
+
+          -- Create the missing secret
+          INSERT INTO user_secrets (email, password_hash, session_id)
+          VALUES (p_email, p_password_hash, p_session_id)
+          RETURNING * INTO v_secret;
+      ELSE
+          RETURN jsonb_build_object('success', false, 'message', 'Invalid password or account requires activation');
+      END IF;
+  END IF;
+
   IF v_secret.password_hash = p_password_hash THEN
     -- Update session and login stats
     UPDATE user_secrets SET session_id = p_session_id WHERE email = p_email;
@@ -1249,8 +1264,10 @@ DECLARE
     v_actual_role VARCHAR := 'student';
     v_invite JSONB;
 BEGIN
-    -- 1. Check if user already exists
-    IF EXISTS (SELECT 1 FROM users WHERE email = p_email) THEN
+    -- 1. Check if user fully exists (User record + Secret record)
+    -- If user exists in users table but lacks a secret, we allow "reclaiming" the account.
+    IF EXISTS (SELECT 1 FROM users WHERE email = p_email) AND
+       EXISTS (SELECT 1 FROM user_secrets WHERE email = p_email) THEN
         RETURN jsonb_build_object('success', false, 'message', 'User with this email already exists');
     END IF;
 
@@ -1279,13 +1296,23 @@ BEGIN
         v_actual_role := 'student';
     END IF;
 
-    -- 3. Create User
+    -- 3. Create or Update User record
     INSERT INTO users (email, full_name, phone, role, active, metadata)
-    VALUES (p_email, p_full_name, p_phone, v_actual_role, p_active, p_metadata);
+    VALUES (p_email, p_full_name, p_phone, v_actual_role, p_active, p_metadata)
+    ON CONFLICT (email) DO UPDATE SET
+        full_name = EXCLUDED.full_name,
+        phone = EXCLUDED.phone,
+        active = EXCLUDED.active,
+        metadata = users.metadata || EXCLUDED.metadata,
+        updated_at = NOW();
 
-    -- 4. Create Secrets
+    -- 4. Create or Update Secrets
     INSERT INTO user_secrets (email, password_hash, session_id)
-    VALUES (p_email, p_password_hash, p_session_id);
+    VALUES (p_email, p_password_hash, p_session_id)
+    ON CONFLICT (email) DO UPDATE SET
+        password_hash = EXCLUDED.password_hash,
+        session_id = EXCLUDED.session_id,
+        updated_at = NOW();
 
     RETURN jsonb_build_object('success', true, 'user', (
         SELECT to_jsonb(t.*) FROM (
@@ -1737,7 +1764,7 @@ END $$;
 -- 0. User Secrets
 DROP POLICY IF EXISTS "Secrets: No Public Access" ON user_secrets;
 DROP POLICY IF EXISTS "Secrets: Admin Manage" ON user_secrets;
-CREATE POLICY "Secrets: Admin Manage" ON user_secrets FOR ALL USING (is_admin());
+CREATE POLICY "Secrets: No Public Access" ON user_secrets FOR ALL USING (false);
 
 -- 1. Users Table
 DROP POLICY IF EXISTS "Users: Select" ON users;
