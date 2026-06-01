@@ -816,6 +816,11 @@ DECLARE
     v_due_date TIMESTAMP WITH TIME ZONE;
     v_allow_late BOOLEAN;
 BEGIN
+    -- Bypass check for admins to allow data restoration and historical record management
+    IF is_admin() THEN
+        RETURN NEW;
+    END IF;
+
     SELECT start_at, due_date, allow_late_submissions
     INTO v_start_at, v_due_date, v_allow_late
     FROM assignments
@@ -848,6 +853,11 @@ DECLARE
     v_time_limit INTEGER;
     v_is_reconciling BOOLEAN := FALSE;
 BEGIN
+    -- Bypass check for admins to allow data restoration
+    IF is_admin() THEN
+        RETURN NEW;
+    END IF;
+
     -- Detect if this update is coming from a trusted authoritative RPC via session metadata if needed,
     -- but for now we just rely on relaxing the late submission check for status transitions to 'submitted'.
     -- The authoritative scoring and timing logic is now handled in reconcile_quiz_attempts and submit_quiz_attempt.
@@ -881,6 +891,11 @@ DECLARE
     v_attempts_allowed INTEGER;
     v_next_attempt INTEGER;
 BEGIN
+    -- Bypass logic for admins during restoration, or if attempt_number is already provided
+    IF is_admin() OR NEW.attempt_number IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+
     -- Force attempt_number to NULL if it's in-progress to ensure it doesn't count towards used attempts
     IF (NEW.status = 'in-progress') THEN
         NEW.attempt_number := NULL;

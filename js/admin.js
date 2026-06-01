@@ -10,9 +10,9 @@ const BACKUP_CONFIG = {
         { name: 'live_classes', onConflict: 'id' },
         { name: 'materials', onConflict: 'id' },
         { name: 'enrollments', onConflict: 'course_id,student_email' },
-        { name: 'submissions', onConflict: 'assignment_id,student_email' },
-        { name: 'quiz_submissions', onConflict: 'quiz_id,student_email,attempt_number' },
-        { name: 'attendance', onConflict: 'live_class_id,student_email' },
+        { name: 'submissions', onConflict: 'id' },
+        { name: 'quiz_submissions', onConflict: 'id' },
+        { name: 'attendance', onConflict: 'id' },
         { name: 'discussions', onConflict: 'id' },
         { name: 'notifications', onConflict: 'id' },
         { name: 'broadcasts', onConflict: 'id' },
@@ -1347,16 +1347,17 @@ async function exportBackup() {
         tables: {}
     };
 
-    const fetchPromises = BACKUP_CONFIG.tables.map(async config => {
+    const totalTables = BACKUP_CONFIG.tables.length;
+    for (let i = 0; i < totalTables; i++) {
+        const config = BACKUP_CONFIG.tables[i];
         try {
+            UI.showNotification(`Exporting table ${i + 1} of ${totalTables}: ${config.name}...`, 'info');
             backupData.tables[config.name] = await SupabaseDB.getAllTableData(config.name);
         } catch (err) {
             console.warn(`Failed to export table ${config.name}:`, err);
             backupData.tables[config.name] = [];
         }
-    });
-
-    await Promise.all(fetchPromises);
+    }
 
     const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1408,6 +1409,41 @@ async function importBackup(event) {
         _isRestoring = true;
         UI.showLoading('mgt-area', 'Restoring system data...');
 
+        // 1. Dependency Validation: Ensure parent records exist for items being imported
+        const validationProblems = [];
+        const tableDataMap = tables;
+
+        const checkDependency = (tableName, records, fkField, parentTableName) => {
+            const parentRecords = tableDataMap[parentTableName] || [];
+            const parentIds = new Set(parentRecords.map(p => p.id || p.email));
+
+            records.forEach(r => {
+                const fkValue = r[fkField];
+                if (fkValue && !parentIds.has(fkValue)) {
+                    // Only flag if parent table IS in the backup but ID is missing
+                    if (tableDataMap[parentTableName]) {
+                        validationProblems.push(`Table "${tableName}" record (${r.id || r.email}) references missing "${parentTableName}" (${fkValue})`);
+                    }
+                }
+            });
+        };
+
+        if (tableDataMap['lessons']) checkDependency('lessons', tableDataMap['lessons'], 'topic_id', 'topics');
+        if (tableDataMap['topics']) checkDependency('topics', tableDataMap['topics'], 'course_id', 'courses');
+        if (tableDataMap['lessons']) checkDependency('lessons', tableDataMap['lessons'], 'course_id', 'courses');
+        if (tableDataMap['enrollments']) checkDependency('enrollments', tableDataMap['enrollments'], 'course_id', 'courses');
+        if (tableDataMap['submissions']) checkDependency('submissions', tableDataMap['submissions'], 'assignment_id', 'assignments');
+        if (tableDataMap['quiz_submissions']) checkDependency('quiz_submissions', tableDataMap['quiz_submissions'], 'quiz_id', 'quizzes');
+        if (tableDataMap['attendance']) checkDependency('attendance', tableDataMap['attendance'], 'live_class_id', 'live_classes');
+
+        if (validationProblems.length > 0) {
+            console.warn('Backup validation warnings:', validationProblems);
+            if (!await UI.confirm(`The backup has ${validationProblems.length} potential dependency issues (e.g. lessons referencing missing topics). Proceed anyway?`, 'Validation Warning')) {
+                throw new Error('Restore cancelled due to validation warnings.');
+            }
+        }
+
+        // 2. Perform Restore
         // Order tables based on BACKUP_CONFIG to respect foreign keys
         const sortedTables = BACKUP_CONFIG.tables
             .filter(config => tableList.includes(config.name));
@@ -1426,14 +1462,19 @@ async function importBackup(event) {
 
             for (let i = 0; i < sanitizedRecords.length; i += batchSize) {
                 const batch = sanitizedRecords.slice(i, i + batchSize);
-                const { error } = await supabaseClient
-                    .from(table)
-                    .upsert(batch, { onConflict: config.onConflict });
+                try {
+                    const { error } = await supabaseClient
+                        .from(table)
+                        .upsert(batch, { onConflict: config.onConflict });
 
-                if (error) {
-                    console.error(`Upsert failed for table "${table}" at batch index ${i}:`, error);
-                    console.error('Failed batch sample:', batch[0]);
-                    throw new Error(`Error in table "${table}": ${error.message}`);
+                    if (error) {
+                        const firstId = batch[0].id || batch[0].email || 'unknown';
+                        console.error(`Upsert failed for table "${table}" at batch index ${i} (First ID: ${firstId}):`, error);
+                        console.error('Failed batch sample:', batch[0]);
+                        throw new Error(`[Table: ${table}] [Record ID: ${firstId}] ${error.message}`);
+                    }
+                } catch (batchErr) {
+                    throw batchErr;
                 }
             }
         }
