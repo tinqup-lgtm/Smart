@@ -5,7 +5,7 @@ const escapeHtml = window.escapeHtml || ((s) => String(s || '').replace(/&/g, '&
 const escapeAttr = window.escapeAttr || ((s) => String(s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
 
 const BACKUP_CONFIG = {
-    version: '1.1.2',
+    version: '1.2.0',
     tables: [
         { name: 'users', onConflict: 'email', orderBy: 'email', dependencies: [] },
         { name: 'courses', onConflict: 'id', orderBy: 'id', dependencies: [{ table: 'users', field: 'teacher_email', optional: true }] },

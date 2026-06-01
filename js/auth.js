@@ -384,7 +384,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         return ValidationUI.showError(errorEl, 'This account has an active password reset request pending admin review. You cannot sign up again.');
                     }
                     if (existing.reset_request.status === 'approved') {
-                        const tempPass = existing.reset_request.temp_password_plain || '[Contact Admin]';
+                        const tempPass = existing.reset_data?.temp_password_plain || '[Contact Admin]';
                         return ValidationUI.showErrorHTML(errorEl, `This account has an approved password reset. Please use the temporary password provided by your administrator to login: <br><strong style="font-family:monospace; font-size:1.1rem; letter-spacing:1px; display:block; margin-top:5px; background:rgba(0,0,0,0.05); padding:5px; border-radius:4px">${escapeHtml(tempPass)}</strong>`);
                     }
                 }
@@ -493,8 +493,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         return ValidationUI.showError(passErr, 'Temporary password expired. Please request a new reset.');
                     }
                     // Explicitly pass temp password in session for potential UI checks
-                    if (user.reset_request.temp_password_plain) {
-                         sessionStorage.setItem('lastApprovedTemp', user.reset_request.temp_password_plain);
+                    if (user.reset_data?.temp_password_plain) {
+                         sessionStorage.setItem('lastApprovedTemp', user.reset_data.temp_password_plain);
                     }
                 }
             }
@@ -523,8 +523,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Handle approved reset redirection
                 if (authUser.reset_request && authUser.reset_request.status === 'approved') {
                     // Cache the plain text temp password if available for reuse in new password screen
-                    if (authUser.reset_request.temp_password_plain) {
-                        sessionStorage.setItem('lastApprovedTemp', authUser.reset_request.temp_password_plain);
+                    if (authUser.reset_data?.temp_password_plain) {
+                        sessionStorage.setItem('lastApprovedTemp', authUser.reset_data.temp_password_plain);
                     }
                     Auth.showNewPassword();
                     return;
@@ -627,27 +627,60 @@ document.addEventListener('DOMContentLoaded', () => {
             // Prevent using the same temporary password
             const hashedNew = await window.hashPassword(newPass, freshUser.email);
             const lastTemp = sessionStorage.getItem('lastApprovedTemp');
-            if (hashedNew === freshUser.reset_request.temp_password || (lastTemp && newPass === lastTemp)) {
+            if (hashedNew === freshUser.reset_data?.temp_password || (lastTemp && newPass === lastTemp)) {
                 return ValidationUI.showError(err, 'New password cannot be the same as your temporary password.');
             }
 
-            // Update password and clear reset request
-            freshUser.password = hashedNew;
-            freshUser.reset_request = null;
-
-            // Prepare fresh session ID
-            const sid = 's_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-            freshUser.session_id = sid;
-            freshUser.metadata = { ...(freshUser.metadata || {}), last_invalidation_reason: 'password_change' };
-
-            // Persist changes using the current valid (temporary gateway) session.
-            // Our refactored saveUser now automatically handles window.setSupabaseSession(sid).
-            const updatedUser = await SupabaseDB.saveUser(freshUser);
-            if (!updatedUser) {
-                return ValidationUI.showError(err, 'Failed to update password. Please try again.');
+            // 1. Update ONLY the password secret first (using the current gateway session)
+            try {
+                // We bypass saveUser which would clear the reset_request in the users table too early.
+                // Instead, we just update the credentials.
+                await window.supabaseClient.rpc('update_user_secret_secure', {
+                    p_email: freshUser.email,
+                    p_password_hash: hashedNew,
+                    p_session_id: 'verifying_' + Date.now()
+                });
+            } catch (updErr) {
+                console.error('Credential update failed:', updErr);
+                return ValidationUI.showError(err, 'Failed to update credentials. Please try again.');
             }
 
-            await SessionManager.setCurrentUser(updatedUser);
+            // 2. --- CRITICAL STEP: Re-authenticate with the new permanent password to ensure it works ---
+            let finalAuthUser = null;
+            let reAuthSid = 's_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+            try {
+                const authCheck = await SupabaseDB.authenticateUser(freshUser.email, hashedNew, reAuthSid);
+
+                if (!authCheck.success) {
+                    throw new Error('Verification failed: ' + (authCheck.message || 'Unknown error'));
+                }
+                finalAuthUser = authCheck.user;
+            } catch (authErr) {
+                console.error('New password verification failed:', authErr);
+                return ValidationUI.showError(err, 'Credentials updated, but verification failed. Reset is NOT finalized. Please try logging in manually.');
+            }
+
+            // 3. SUCCESS! Now mark reset as "used" by clearing fields from public users and secrets tables
+            try {
+                // Update session context to the new verified session
+                window.setSupabaseSession(reAuthSid);
+
+                const finalUserUpdate = {
+                    ...freshUser,
+                    reset_request: null,
+                    reset_data: {}, // clear signal for RPC
+                    session_id: reAuthSid,
+                    metadata: { ...(freshUser.metadata || {}), last_invalidation_reason: 'password_change' }
+                };
+
+                const savedUser = await SupabaseDB.saveUser(finalUserUpdate);
+                if (!savedUser) throw new Error('Final state synchronization failed.');
+
+                await SessionManager.setCurrentUser(savedUser);
+            } catch (syncErr) {
+                console.warn('Final state sync issue:', syncErr);
+                // We still proceed as the credentials are valid now
+            }
 
             // Notify user of update
             await SupabaseDB.createNotification(
@@ -660,7 +693,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             alert('Password successfully reset. You MUST now login with your new permanent password.');
 
-            // Force re-authentication by clearing the temporary gateway session
+            // Force re-authentication by clearing the local session to finalize the "used" state
             sessionStorage.removeItem('lastApprovedTemp');
             await SessionManager.clearCurrentUser('password_change');
             Auth.showLogin();
