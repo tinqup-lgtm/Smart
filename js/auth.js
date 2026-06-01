@@ -368,8 +368,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const roleCount = await SupabaseDB.getCount('users', q => q.eq('role', role));
                     if (roleCount >= 1) {
                         const roleName = role.charAt(0).toUpperCase() + role.slice(1);
-                        errorEl.innerText = `The maximum number of ${roleName} accounts has been reached. Please contact an existing admin to create more accounts.`;
-                        return;
+                        return ValidationUI.showError(errorEl, `The maximum number of ${roleName} accounts has been reached. Please contact an existing admin to create more accounts.`);
                     }
                 } catch (e) {
                     console.error(`Error checking ${role} count:`, e);
@@ -382,16 +381,14 @@ document.addEventListener('DOMContentLoaded', () => {
             if (existing && existing.has_secret) {
                 if (existing.reset_request) {
                     if (existing.reset_request.status === 'pending') {
-                        errorEl.innerText = 'This account has an active password reset request pending admin review. You cannot sign up again.';
-                        return;
+                        return ValidationUI.showError(errorEl, 'This account has an active password reset request pending admin review. You cannot sign up again.');
                     }
                     if (existing.reset_request.status === 'approved') {
-                        errorEl.innerHTML = `This account has an approved password reset. Please use the temporary password provided by your administrator to login: <br><strong style="font-family:monospace; letter-spacing:1px">${escapeHtml(existing.reset_request.temp_password_plain)}</strong>`;
-                        return;
+                        const tempPass = existing.reset_request.temp_password_plain || '[Contact Admin]';
+                        return ValidationUI.showErrorHTML(errorEl, `This account has an approved password reset. Please use the temporary password provided by your administrator to login: <br><strong style="font-family:monospace; font-size:1.1rem; letter-spacing:1px; display:block; margin-top:5px; background:rgba(0,0,0,0.05); padding:5px; border-radius:4px">${escapeHtml(tempPass)}</strong>`);
                     }
                 }
-                errorEl.innerText = 'Account with this email already exists.';
-                return;
+                return ValidationUI.showError(errorEl, 'Account with this email already exists.');
             }
             if (password !== confirm) {
                 return ValidationUI.showError(errorEl, 'Passwords do not match.');
@@ -399,43 +396,47 @@ document.addEventListener('DOMContentLoaded', () => {
             const vPass = Validator.password(password);
             if (!vPass.valid) return ValidationUI.showError(errorEl, vPass.message);
 
-            const hashedPassword = await window.hashPassword(password, email);
+            try {
+                const hashedPassword = await window.hashPassword(password, email);
 
-            // Generate a fresh session ID for the new signup
-            const sid = SessionManager.getSessionId(true);
+                // Generate a fresh session ID for the new signup
+                const sid = SessionManager.getSessionId(true);
 
-            const user = {
-                full_name: fullName,
-                email,
-                phone,
-                password: hashedPassword,
-                role,
-                session_id: sid,
-                invite_token: activeInvite?.token || null
-            };
-            
-            const savedUser = await SupabaseDB.saveUser(user);
-            if (!savedUser) {
-                errorEl.innerText = 'Failed to create account. Please try again.';
-                return;
-            }
+                const user = {
+                    full_name: fullName,
+                    email,
+                    phone,
+                    password: hashedPassword,
+                    role,
+                    session_id: sid,
+                    invite_token: activeInvite?.token || null
+                };
 
-            // Establish RLS session context
-            window.setSupabaseSession(sid);
-
-            // Mark invite as used if applicable
-            if (activeInvite) {
-                try {
-                    await SupabaseDB.markInviteUsed(activeInvite.token);
-                    sessionStorage.removeItem('activeInvite');
-                } catch (e) {
-                    console.warn('Failed to mark invite as used:', e);
+                const savedUser = await SupabaseDB.saveUser(user);
+                if (!savedUser) {
+                    return ValidationUI.showError(errorEl, 'Failed to create account. Please try again.');
                 }
+
+                // Establish RLS session context
+                window.setSupabaseSession(sid);
+
+                // Mark invite as used if applicable
+                if (activeInvite) {
+                    try {
+                        await SupabaseDB.markInviteUsed(activeInvite.token);
+                        sessionStorage.removeItem('activeInvite');
+                    } catch (e) {
+                        console.warn('Failed to mark invite as used:', e);
+                    }
+                }
+
+                await SessionManager.setCurrentUser(savedUser);
+                alert(`Welcome ${fullName}! Your ${role} account has been created.`);
+                Auth.redirectByRole(role);
+            } catch (err) {
+                console.error('Signup error:', err);
+                ValidationUI.showError(errorEl, err.message || 'An error occurred during signup. Please try again.');
             }
-            
-            await SessionManager.setCurrentUser(savedUser);
-            alert(`Welcome ${fullName}! Your ${role} account has been created.`);
-            Auth.redirectByRole(role);
         });
     }
 
@@ -466,14 +467,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const user = await SupabaseDB.getUser(email);
 
             if (!user) {
-                if (emailErr) emailErr.innerText = 'No account found with this email';
-                return;
+                return ValidationUI.showError(emailErr, 'No account found with this email');
             }
 
             if (isAccountLocked(user)) {
                 const mins = Math.ceil((new Date(user.locked_until).getTime() - Date.now()) / 60000);
-                if (passErr) passErr.innerText = `Account is locked. Try again in ${mins} minutes`;
-                return;
+                return ValidationUI.showError(passErr, `Account is locked. Try again in ${mins} minutes`);
             }
 
             // Handle expired/status-based reset restrictions
@@ -482,19 +481,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (user.reset_request) {
                 if (user.reset_request.status === 'denied') {
-                    if (passErr) passErr.innerText = `Reset Request Denied: ${user.reset_request.denial_reason || 'No reason provided.'}`;
-                    return;
+                    return ValidationUI.showError(passErr, `Reset Request Denied: ${user.reset_request.denial_reason || 'No reason provided.'}`);
                 }
                 if (user.reset_request.status === 'pending') {
-                    if (passErr) passErr.innerText = 'Password reset request pending admin review.';
-                    return;
+                    return ValidationUI.showError(passErr, 'Password reset request pending admin review.');
                 }
                 if (user.reset_request.status === 'approved') {
                     if (user.reset_request.expires_at && Date.now() > new Date(user.reset_request.expires_at).getTime()) {
                         user.reset_request = null;
                         await SupabaseDB.saveUser(user);
-                        if (passErr) passErr.innerText = 'Temporary password expired. Please request a new reset.';
-                        return;
+                        return ValidationUI.showError(passErr, 'Temporary password expired. Please request a new reset.');
                     }
                     // Explicitly pass temp password in session for potential UI checks
                     if (user.reset_request.temp_password_plain) {
@@ -512,10 +508,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 const authResult = await SupabaseDB.authenticateUser(email, hashedInput, sid);
 
                 if (!authResult.success) {
-                    if (passErr) {
-                        passErr.innerText = authResult.message || 'Login failed';
+                    if (authResult.temp_password) {
+                        return ValidationUI.showErrorHTML(passErr, `${authResult.message}<br><strong style="font-family:monospace; font-size:1.1rem; letter-spacing:1px; display:block; margin-top:5px; background:rgba(0,0,0,0.05); padding:5px; border-radius:4px">${escapeHtml(authResult.temp_password)}</strong>`);
                     }
-                    return;
+                    return ValidationUI.showError(passErr, authResult.message || 'Login failed');
                 }
 
                 const authUser = authResult.user;
@@ -541,7 +537,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             } catch (err) {
                 console.error('Auth error:', err);
-                if (passErr) passErr.innerText = 'An error occurred during login. Please try again.';
+                ValidationUI.showError(passErr, 'An error occurred during login. Please try again.');
             }
         });
     }
@@ -562,28 +558,27 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!vEmail.valid) return ValidationUI.showError(err, vEmail.message);
 
             if (!reason) {
-                if (err) err.innerText = 'Please select a reason.';
-                return;
+                return ValidationUI.showError(err, 'Please select a reason.');
             }
 
             const maint = await Auth._checkMaintenance(email);
             if (maint.active) {
-                if (err) err.innerText = maint.message;
-                else alert(maint.message);
-                return;
+                return ValidationUI.showError(err, maint.message);
             }
 
             try {
                 const result = await SupabaseDB.requestPasswordReset(email, reason, customReason);
                 if (!result.success) {
-                    if (err) err.innerText = result.message;
-                    return;
+                    if (result.temp_password) {
+                        return ValidationUI.showErrorHTML(err, `${result.message}<br><strong style="font-family:monospace; font-size:1.1rem; letter-spacing:1px; display:block; margin-top:5px; background:rgba(0,0,0,0.05); padding:5px; border-radius:4px">${escapeHtml(result.temp_password)}</strong>`);
+                    }
+                    return ValidationUI.showError(err, result.message);
                 }
                 alert(result.message);
                 Auth.showLogin();
             } catch (e) {
                 console.error('Reset request error:', e);
-                if (err) err.innerText = 'An error occurred. Please try again later.';
+                ValidationUI.showError(err, 'An error occurred. Please try again later.');
             }
         });
     }
@@ -599,10 +594,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const confirm = document.getElementById('confirmNewPass').value;
 
             const err = document.getElementById('newPasswordError');
-            if (err) err.innerText = '';
+            ValidationUI.clearError(err);
 
             if (!user) {
-                if (err) err.innerText = 'Session expired. Please login again with temporary password.';
+                ValidationUI.showError(err, 'Session expired. Please login again with temporary password.');
                 Auth.showLogin();
                 return;
             }
@@ -610,7 +605,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Validate reset approval still valid
             const freshUser = await SupabaseDB.getUser(user.email);
             if (!freshUser.reset_request || freshUser.reset_request.status !== 'approved') {
-                if (err) err.innerText = 'No active reset found. Please request a new reset.';
+                ValidationUI.showError(err, 'No active reset found. Please request a new reset.');
                 Auth.showReset();
                 return;
             }
@@ -618,7 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 freshUser.reset_request = null;
                 // Since this user IS logged in (via temp password), saveUser is allowed by RLS
                 await SupabaseDB.saveUser(freshUser);
-                if (err) err.innerText = 'Temporary password expired. Please request a new reset.';
+                ValidationUI.showError(err, 'Temporary password expired. Please request a new reset.');
                 Auth.showReset();
                 return;
             }
@@ -633,8 +628,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const hashedNew = await window.hashPassword(newPass, freshUser.email);
             const lastTemp = sessionStorage.getItem('lastApprovedTemp');
             if (hashedNew === freshUser.reset_request.temp_password || (lastTemp && newPass === lastTemp)) {
-                if (err) err.innerText = 'New password cannot be the same as your temporary password.';
-                return;
+                return ValidationUI.showError(err, 'New password cannot be the same as your temporary password.');
             }
 
             // Update password and clear reset request
@@ -650,8 +644,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Our refactored saveUser now automatically handles window.setSupabaseSession(sid).
             const updatedUser = await SupabaseDB.saveUser(freshUser);
             if (!updatedUser) {
-                if (err) err.innerText = 'Failed to update password. Please try again.';
-                return;
+                return ValidationUI.showError(err, 'Failed to update password. Please try again.');
             }
 
             await SessionManager.setCurrentUser(updatedUser);

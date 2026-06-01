@@ -1275,6 +1275,13 @@ BEGIN
           -- Mark reset request as used immediately to ensure one-time gateway behavior
           UPDATE users SET reset_request = reset_request || '{"login_used": true}'::jsonb WHERE email = p_email;
       ELSE
+          IF v_user.reset_request IS NOT NULL AND v_user.reset_request->>'status' = 'approved' THEN
+             RETURN jsonb_build_object(
+                 'success', false,
+                 'message', 'Invalid password. This account has an approved password reset. Please use the temporary password provided by your administrator to login.',
+                 'temp_password', v_user.reset_request->>'temp_password_plain'
+             );
+          END IF;
           RETURN jsonb_build_object('success', false, 'message', 'Invalid password or account requires activation');
       END IF;
   END IF;
@@ -1347,9 +1354,13 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'message', 'Too many failed attempts. Account locked for 30 minutes.');
     END IF;
 
-    -- If there is an approved reset request, display the temp password in the error message
+    -- If there is an approved reset request, return the temp password separately
     IF v_user.reset_request IS NOT NULL AND v_user.reset_request->>'status' = 'approved' THEN
-        RETURN jsonb_build_object('success', false, 'message', 'Invalid password. This account has an approved password reset. Please use the temporary password provided by your administrator to login: ' || COALESCE(v_user.reset_request->>'temp_password_plain', '[Contact Admin]'));
+        RETURN jsonb_build_object(
+            'success', false,
+            'message', 'Invalid password. This account has an approved password reset. Please use the temporary password provided by your administrator to login.',
+            'temp_password', v_user.reset_request->>'temp_password_plain'
+        );
     END IF;
 
     RETURN jsonb_build_object('success', false, 'message', 'Invalid password. ' || (5 - (v_user.failed_attempts + 1)) || ' attempts remaining.');
@@ -1555,7 +1566,11 @@ BEGIN
         IF v_user.reset_request->>'status' = 'pending' THEN
             RETURN jsonb_build_object('success', false, 'message', 'Reset request already pending review.');
         ELSIF v_user.reset_request->>'status' = 'approved' THEN
-            RETURN jsonb_build_object('success', false, 'message', 'This account has an approved password reset. Please use the temporary password provided by your administrator to login: ' || COALESCE(v_user.reset_request->>'temp_password_plain', '[Visit administrator to retrieve]'));
+            RETURN jsonb_build_object(
+                'success', false,
+                'message', 'This account has an approved password reset. Please use the temporary password provided by your administrator to login.',
+                'temp_password', v_user.reset_request->>'temp_password_plain'
+            );
         END IF;
     END IF;
 

@@ -143,6 +143,12 @@ const ValidationUI = {
         if (!errorEl) return;
         errorEl.innerText = '';
         errorEl.style.display = 'none';
+    },
+    showErrorHTML(errorEl, html) {
+        if (typeof errorEl === 'string') errorEl = document.getElementById(errorEl);
+        if (!errorEl) return;
+        errorEl.innerHTML = html;
+        errorEl.style.display = 'block';
     }
 };
 window.ValidationUI = ValidationUI;
