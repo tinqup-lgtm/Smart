@@ -1376,6 +1376,7 @@ class BackupAuditManager {
                                 type: 'MISSING_FIELD',
                                 field: dep.field,
                                 parentTable: dep.table,
+                                isOptional: false,
                                 message: `Required field "${dep.field}" is empty.`
                             });
                         }
