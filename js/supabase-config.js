@@ -236,7 +236,7 @@ class SupabaseDB {
         }
 
         // Handle User Update
-        const data = await this._upsert('users', user, 'email');
+        await this._upsert('users', user, 'email');
 
         // Update secrets via secure RPC if provided
         if (user.password || user.session_id) {
@@ -246,6 +246,14 @@ class SupabaseDB {
                     p_password_hash: user.password || null,
                     p_session_id: user.session_id || (user.password ? 'invalidated_' + Date.now() : null)
                 });
+
+                // SECURITY: If session ID was updated, we MUST establish the new context locally
+                // BEFORE the subsequent getUser call to avoid RLS authorization failures.
+                // We only do this if the user being updated is the current session user.
+                const currentUser = await SessionManager.getCurrentUser();
+                if (currentUser && currentUser.email === user.email && user.session_id && typeof window.setSupabaseSession === 'function') {
+                    window.setSupabaseSession(user.session_id);
+                }
             } catch (e) {
                 console.warn('Failed to update user secrets:', e);
             }

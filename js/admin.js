@@ -461,6 +461,9 @@ async function toggleUserStatus(email, currentStatus) {
           user.metadata = { ...(user.metadata || {}), last_invalidation_reason: 'deactivated' };
       }
 
+      // Our refactored saveUser handles session synchronization if session_id is present.
+      // For Admins, setSupabaseSession will be called with the target user's sid,
+      // but since we immediately re-fetch the dashboard state, this is typically handled by the UI refresh.
       await SupabaseDB.saveUser(user);
       UI.showNotification(`User ${user.active ? 'activated' : 'deactivated'}`, 'success');
 
@@ -496,6 +499,7 @@ async function lockUser(email, minutes) {
       user.session_id = 'locked_' + Date.now();
       user.metadata = { ...(user.metadata || {}), last_invalidation_reason: 'locked' };
 
+      // Our refactored saveUser handles session synchronization.
       await SupabaseDB.saveUser(user);
       UI.showNotification(`User locked for ${minutes} minutes`);
       renderUsers();

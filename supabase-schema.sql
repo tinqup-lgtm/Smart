@@ -1296,8 +1296,9 @@ BEGIN
              RETURN jsonb_build_object('success', false, 'message', 'Temporary password already used. Reset password to continue.');
         END IF;
 
-        -- Mark as used for subsequent attempts
-        UPDATE users SET reset_request = reset_request || '{"login_used": true}'::jsonb WHERE email = p_email;
+        -- Mark as used for subsequent attempts and update local v_user record for accurate response
+        UPDATE users SET reset_request = reset_request || '{"login_used": true}'::jsonb WHERE email = p_email
+        RETURNING reset_request INTO v_user.reset_request;
     END IF;
 
     -- Update session and login stats
@@ -1307,7 +1308,8 @@ BEGIN
       failed_attempts = 0,
       locked_until = NULL,
       metadata = COALESCE(metadata, '{}'::jsonb) || '{"last_invalidation_reason": "new_login"}'::jsonb
-    WHERE email = p_email;
+    WHERE email = p_email
+    RETURNING last_login, failed_attempts, locked_until, metadata INTO v_user.last_login, v_user.failed_attempts, v_user.locked_until, v_user.metadata;
 
     RETURN jsonb_build_object(
       'success', true,
@@ -1319,9 +1321,9 @@ BEGIN
         'role', v_user.role,
         'created_at', v_user.created_at,
         'updated_at', v_user.updated_at,
-        'last_login', NOW(),
-        'failed_attempts', 0,
-        'locked_until', NULL,
+        'last_login', v_user.last_login,
+        'failed_attempts', v_user.failed_attempts,
+        'locked_until', v_user.locked_until,
         'lockouts', v_user.lockouts,
         'flagged', v_user.flagged,
         'reset_request', v_user.reset_request,
@@ -1492,11 +1494,14 @@ RETURNS JSONB AS $$
 DECLARE
     v_user RECORD;
     v_session_id VARCHAR;
+    v_has_secret BOOLEAN;
 BEGIN
     SELECT * INTO v_user FROM users WHERE email = p_email;
     IF NOT FOUND THEN
         RETURN NULL;
     END IF;
+
+    SELECT EXISTS (SELECT 1 FROM user_secrets WHERE email = p_email) INTO v_has_secret;
 
     -- Only include session_id if requester is admin or the user themselves
     -- Uses get_auth_email_raw() to allow self-profile access during gateway window
@@ -1504,7 +1509,10 @@ BEGIN
         SELECT session_id INTO v_session_id FROM user_secrets WHERE email = p_email;
     END IF;
 
-    RETURN to_jsonb(v_user) || jsonb_build_object('session_id', v_session_id);
+    RETURN to_jsonb(v_user) || jsonb_build_object(
+        'session_id', v_session_id,
+        'has_secret', v_has_secret
+    );
 END;
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
