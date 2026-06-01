@@ -21,6 +21,13 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Utility Functions
+CREATE OR REPLACE FUNCTION validate_email_format(email VARCHAR)
+RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$';
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -366,6 +373,9 @@ CREATE TABLE IF NOT EXISTS support_tickets (
 DO $$
 BEGIN
     -- Separate top-level ALTER statements inside DO block to ensure columns exist for subsequent script parsing
+    ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_check;
+    ALTER TABLE users ADD CONSTRAINT users_email_check CHECK (validate_email_format(email));
+
     ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
     ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '30 days');
     ALTER TABLE notifications ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '90 days');
@@ -929,6 +939,22 @@ CREATE TRIGGER tr_validate_quiz_attempts
 BEFORE INSERT OR UPDATE ON quiz_submissions
 FOR EACH ROW EXECUTE PROCEDURE validate_quiz_attempts();
 
+-- Prevent regression from submitted to in-progress
+CREATE OR REPLACE FUNCTION prevent_submission_regression()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.status = 'submitted' AND NEW.status = 'in-progress' THEN
+        RAISE EXCEPTION 'Cannot change status from submitted back to in-progress';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS tr_prevent_submission_regression ON quiz_submissions;
+CREATE TRIGGER tr_prevent_submission_regression
+BEFORE UPDATE ON quiz_submissions
+FOR EACH ROW EXECUTE PROCEDURE prevent_submission_regression();
+
 -- Ensure only one in-progress attempt exists per student per quiz to prevent duplicate start records.
 -- This combined with validate_quiz_attempts ensures a clean "one-in-progress-at-a-time" flow.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_quiz_submissions_in_progress_unique ON quiz_submissions (quiz_id, student_email) WHERE (status = 'in-progress');
@@ -1345,6 +1371,19 @@ DECLARE
     v_actual_role VARCHAR := 'student';
     v_invite JSONB;
 BEGIN
+    -- 0. Server-side Validation
+    IF NOT validate_email_format(p_email) THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Invalid email format');
+    END IF;
+
+    IF p_full_name IS NULL OR length(trim(p_full_name)) < 2 THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Full name is required (min 2 chars)');
+    END IF;
+
+    IF p_password_hash IS NULL OR length(p_password_hash) < 8 THEN
+         RETURN jsonb_build_object('success', false, 'message', 'Invalid password hash');
+    END IF;
+
     -- 1. Check if user fully exists (User record + Secret record)
     -- If user exists in users table but lacks a secret, we allow "reclaiming" the account.
     IF EXISTS (SELECT 1 FROM users WHERE email = p_email) AND
@@ -1413,6 +1452,11 @@ CREATE OR REPLACE FUNCTION update_user_secret_secure(
     p_session_id VARCHAR DEFAULT NULL
 ) RETURNS VOID AS $$
 BEGIN
+    -- Validation
+    IF p_password_hash IS NOT NULL AND length(p_password_hash) < 8 THEN
+        RAISE EXCEPTION 'Invalid password hash length';
+    END IF;
+
     -- Check permissions: User can only update own secret unless admin
     -- Uses get_auth_email_raw() to allow password updates during gateway window
     IF NOT (is_admin() OR get_auth_email_raw() = p_email) THEN

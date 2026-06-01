@@ -2197,7 +2197,7 @@ window.navigateQuestion = navigateQuestion;
 
 let quizDebounceTimer = null;
 async function autoSubmitQuiz() {
-  if (!currentSubmission || currentSubmission.status !== 'in-progress') return;
+  if (isSubmittingQuiz || !currentSubmission || currentSubmission.status !== 'in-progress') return;
 
   const statusEl = document.getElementById('quizSaveStatus');
   if (statusEl) statusEl.textContent = 'Unsaved changes...';
@@ -2249,6 +2249,9 @@ async function submitQuiz(isAuto = false) {
     clearTimeout(quizDebounceTimer);
     quizDebounceTimer = null;
   }
+
+  // Immediately update status in-memory to prevent autosave races
+  if (currentSubmission) currentSubmission.status = 'submitted';
 
   let user;
   try {

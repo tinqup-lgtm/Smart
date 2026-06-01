@@ -25,7 +25,7 @@ const BACKUP_CONFIG = {
         { name: 'planner', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'users', field: 'user_email' }] },
         { name: 'certificates', onConflict: 'id', orderBy: 'issued_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'study_sessions', onConflict: 'id', orderBy: 'started_at', dependencies: [{ table: 'users', field: 'user_email' }, { table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
-        { name: 'violations', onConflict: 'id', orderBy: 'timestamp', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }, { table: 'users', field: 'teacher_email', optional: true }] },
+        { name: 'violations', onConflict: 'id', orderBy: 'timestamp', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }, { table: ['assignments', 'quizzes'], field: 'assessment_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'invites', onConflict: 'token', orderBy: 'token', dependencies: [{ table: 'users', field: 'created_by' }] },
         { name: 'support_tickets', onConflict: 'id', orderBy: 'created_at', dependencies: [] },
         { name: 'maintenance', onConflict: 'id', orderBy: 'id', dependencies: [] }
@@ -1401,24 +1401,33 @@ class BackupAuditManager {
                         return;
                     }
 
-                    if (recordMaps[dep.table]) {
-                        const maps = recordMaps[dep.table];
-                        const exists = maps.ids.has(value) || maps.emails.has(value) || maps.tokens.has(value);
+                    const targetTables = Array.isArray(dep.table) ? dep.table : [dep.table];
+                    let exists = false;
+                    let searchedTables = [];
 
-                        if (!exists) {
-                            issues.push({
-                                table: config.name,
-                                recordId: record.id,
-                                recordEmail: record.email,
-                                recordToken: record.token,
-                                type: 'ORPHANED_RECORD',
-                                field: dep.field,
-                                parentTable: dep.table,
-                                orphanId: value,
-                                isOptional: !!dep.optional,
-                                message: `References missing ${dep.table} (${value}) via field "${dep.field}".`
-                            });
+                    targetTables.forEach(t => {
+                        if (recordMaps[t]) {
+                            searchedTables.push(t);
+                            const maps = recordMaps[t];
+                            if (maps.ids.has(value) || maps.emails.has(value) || maps.tokens.has(value)) {
+                                exists = true;
+                            }
                         }
+                    });
+
+                    if (searchedTables.length > 0 && !exists) {
+                        issues.push({
+                            table: config.name,
+                            recordId: record.id,
+                            recordEmail: record.email,
+                            recordToken: record.token,
+                            type: 'ORPHANED_RECORD',
+                            field: dep.field,
+                            parentTable: targetTables.join(' | '),
+                            orphanId: value,
+                            isOptional: !!dep.optional,
+                            message: `References missing ${targetTables.join('/')} (${value}) via field "${dep.field}".`
+                        });
                     }
                 });
             });
@@ -1819,18 +1828,23 @@ function showUserForm(user = null) {
     try {
       const fullName = document.getElementById('fullName').value.trim();
       const email = document.getElementById('email').value.trim();
+      const phone = document.getElementById('phone').value.trim();
       const password = document.getElementById('password').value;
 
-    if (!fullName) return UI.showNotification('Full name is required.', 'warn');
-    if (!isValidEmail(email)) return UI.showNotification('Please enter a valid email address.', 'warn');
+      const vName = Validator.fullName(fullName);
+      if (!vName.valid) return UI.showNotification(vName.message, 'warn');
+
+      const vEmail = Validator.email(email);
+      if (!vEmail.valid) return UI.showNotification(vEmail.message, 'warn');
+
+      const vPhone = Validator.phone(phone);
+      if (!vPhone.valid) return UI.showNotification(vPhone.message, 'warn');
 
       const normalizedEmail = normalizeEmail(email);
       let hashedPassword = isEdit ? user.password : '';
       if (password) {
-        if (!isStrongPassword(password)) {
-        UI.showNotification('Password must be 8+ chars, include upper, lower, number, and special char.', 'warn');
-          return;
-        }
+        const vPass = Validator.password(password);
+        if (!vPass.valid) return UI.showNotification(vPass.message, 'warn');
         hashedPassword = await window.hashPassword(password, normalizedEmail);
       }
       const userData = {
@@ -1846,11 +1860,14 @@ function showUserForm(user = null) {
       if (isEdit) {
           const roleChanged = user.role !== userData.role;
           const statusChanged = user.active !== userData.active;
-          if (roleChanged || (statusChanged && !userData.active)) {
+          const emailChanged = user.email !== userData.email;
+          const passwordChanged = !!password;
+
+          if (roleChanged || (statusChanged && !userData.active) || emailChanged || passwordChanged) {
               userData.session_id = 'admin_mod_' + Date.now();
               userData.metadata = {
                   ...(user.metadata || {}),
-                  last_invalidation_reason: roleChanged ? 'role_change' : 'deactivated'
+                  last_invalidation_reason: roleChanged ? 'role_change' : (emailChanged ? 'email_change' : (passwordChanged ? 'password_change' : 'deactivated'))
               };
           }
       }
@@ -1940,8 +1957,11 @@ function showInviteForm() {
       }
 
       if (email) {
+        const vEmail = Validator.email(email);
+        if (!vEmail.valid) return UI.showNotification(vEmail.message, 'warn');
+
         const existing = await SupabaseDB.getUser(email);
-      if (existing) return UI.showNotification('A user with this email already exists.', 'warn');
+        if (existing) return UI.showNotification('A user with this email already exists.', 'warn');
       }
 
       const token = crypto.randomUUID();
