@@ -377,7 +377,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const existing = await SupabaseDB.getUser(email);
-            if (existing) {
+            // Re-auth/Reclamation logic: If user exists in users table but has no secret/password,
+            // allow signup to proceed to create credentials for them.
+            if (existing && existing.has_secret) {
                 if (existing.reset_request) {
                     if (existing.reset_request.status === 'pending') {
                         errorEl.innerText = 'This account has an active password reset request pending admin review. You cannot sign up again.';
@@ -474,11 +476,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // Handle expired reset requests
-            if (user.reset_request && user.reset_request.expires_at && Date.now() > new Date(user.reset_request.expires_at).getTime()) {
-                user.reset_request = null;
-                await SupabaseDB.saveUser(user);
-            }
+            // Handle expired/status-based reset restrictions
+            // Note: We avoid client-side SupabaseDB.saveUser here as it violates RLS for unauthenticated users.
+            // The authenticate_user RPC and purge_expired_records trigger handle these server-side.
 
             if (user.reset_request) {
                 if (user.reset_request.status === 'denied') {
@@ -616,6 +616,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             if (freshUser.reset_request.expires_at && Date.now() > new Date(freshUser.reset_request.expires_at).getTime()) {
                 freshUser.reset_request = null;
+                // Since this user IS logged in (via temp password), saveUser is allowed by RLS
                 await SupabaseDB.saveUser(freshUser);
                 if (err) err.innerText = 'Temporary password expired. Please request a new reset.';
                 Auth.showReset();
@@ -640,20 +641,19 @@ document.addEventListener('DOMContentLoaded', () => {
             freshUser.password = hashedNew;
             freshUser.reset_request = null;
 
-            // Prepare fresh session ID but do NOT set it in sessionStorage yet (avoid RLS authorization failure)
+            // Prepare fresh session ID
             const sid = 's_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
             freshUser.session_id = sid;
             freshUser.metadata = { ...(freshUser.metadata || {}), last_invalidation_reason: 'password_change' };
 
-            // Persist changes using the current valid (temporary gateway) session
+            // Persist changes using the current valid (temporary gateway) session.
+            // Our refactored saveUser now automatically handles window.setSupabaseSession(sid).
             const updatedUser = await SupabaseDB.saveUser(freshUser);
             if (!updatedUser) {
                 if (err) err.innerText = 'Failed to update password. Please try again.';
                 return;
             }
 
-            // ONLY AFTER successful persistence, establish the new RLS session context
-            window.setSupabaseSession(sid);
             await SessionManager.setCurrentUser(updatedUser);
 
             // Notify user of update

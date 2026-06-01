@@ -97,7 +97,8 @@ window.generateTempPassword = function() {
 
 const Validator = {
     email(email) {
-        const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        // Aligned with database validate_email_format regex
+        const re = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
         if (!email) return { valid: false, message: 'Email is required.' };
         if (!re.test(email)) return { valid: false, message: 'Please enter a valid email address.' };
         return { valid: true };
@@ -2243,8 +2244,9 @@ const SettingsManager = {
             // Generate fresh session to invalidate other sessions (Security Best Practice)
             const sid = SessionManager.getSessionId(true);
             fresh.session_id = sid;
-            fresh.metadata = { ...fresh.metadata, last_invalidation_reason: 'password_change' };
+            fresh.metadata = { ...(fresh.metadata || {}), last_invalidation_reason: 'password_change' };
 
+            // Our refactored saveUser now automatically handles window.setSupabaseSession(sid).
             await SupabaseDB.saveUser(fresh);
 
             UI.showNotification('Password updated. Please login again with your new credentials.', 'success');
