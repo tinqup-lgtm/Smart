@@ -1172,7 +1172,7 @@ class SupabaseDB {
         _cache.invalidate('planner');
     }
 
-    // Backup helper
+    // Backup helper with robust pagination support
     static async getAllTableData(table) {
         return this._request(async () => {
             // Handle tables with different timestamp column names for ordering
@@ -1184,20 +1184,47 @@ class SupabaseDB {
             else if (table === 'certificates') orderCol = 'issued_at';
             else if (table === 'user_secrets') orderCol = 'updated_at';
 
-            let { data, error } = await supabaseClient
-                .from(table)
-                .select('*')
-                .order(orderCol, { ascending: true, nullsFirst: true });
+            let allData = [];
+            let page = 0;
+            const pageSize = 1000;
+            let hasMore = true;
 
-            // If column doesn't exist (PGRST100) or other ordering error, try without order
-            if (error && (error.code === 'PGRST100' || error.message?.includes('column') || error.message?.includes('order'))) {
-                const retry = await supabaseClient.from(table).select('*');
-                data = retry.data;
-                error = retry.error;
+            while (hasMore) {
+                const from = page * pageSize;
+                const to = from + pageSize - 1;
+
+                let query = supabaseClient.from(table).select('*').range(from, to);
+
+                // Add stable ordering if we haven't determined the column is missing
+                if (orderCol) {
+                    query = query.order(orderCol, { ascending: true, nullsFirst: true });
+                }
+
+                let { data, error } = await query;
+
+                // Handle missing column errors for ordering
+                if (error && (error.code === 'PGRST100' || error.message?.includes('column') || error.message?.includes('order'))) {
+                    orderCol = null; // Disable ordering for subsequent pages of this table
+                    const retry = await supabaseClient.from(table).select('*').range(from, to);
+                    data = retry.data;
+                    error = retry.error;
+                }
+
+                if (error) throw error;
+
+                if (data && data.length > 0) {
+                    allData = allData.concat(data);
+                    if (data.length < pageSize) {
+                        hasMore = false;
+                    } else {
+                        page++;
+                    }
+                } else {
+                    hasMore = false;
+                }
             }
 
-            if (error) throw error;
-            return data || [];
+            return allData;
         });
     }
 
