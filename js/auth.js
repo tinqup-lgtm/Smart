@@ -344,21 +344,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const role = (document.getElementById('role').value || 'student');
 
             const errorEl = document.getElementById('signupError');
-            errorEl.innerText = '';
+            ValidationUI.clearError(errorEl);
 
-            if (!fullName) {
-                errorEl.innerText = 'Full name is required.';
-                return;
-            }
-            if (!isValidEmail(email)) {
-                errorEl.innerText = 'Please enter a valid email address.';
-                return;
-            }
+            const vName = Validator.fullName(fullName);
+            if (!vName.valid) return ValidationUI.showError(errorEl, vName.message);
 
-            if (phone && !/^\+?[\d\s-]{10,}$/.test(phone)) {
-                errorEl.innerText = 'Please enter a valid phone number (at least 10 digits).';
-                return;
-            }
+            const vEmail = Validator.email(email);
+            if (!vEmail.valid) return ValidationUI.showError(errorEl, vEmail.message);
+
+            const vPhone = Validator.phone(phone);
+            if (!vPhone.valid) return ValidationUI.showError(errorEl, vPhone.message);
 
             // Enforce limit of 1 account for admin and teacher roles for landing page signups
             // Bypassed if using a valid invitation
@@ -397,13 +392,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             if (password !== confirm) {
-                errorEl.innerText = 'Passwords do not match.';
-                return;
+                return ValidationUI.showError(errorEl, 'Passwords do not match.');
             }
-            if (!isStrongPassword(password)) {
-                errorEl.innerText = 'Password must be 8+ chars, include upper, lower, number, and special char.';
-                return;
-            }
+            const vPass = Validator.password(password);
+            if (!vPass.valid) return ValidationUI.showError(errorEl, vPass.message);
 
             const hashedPassword = await window.hashPassword(password, email);
 
@@ -451,24 +443,23 @@ document.addEventListener('DOMContentLoaded', () => {
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const email = normalizeEmail(document.getElementById('loginEmail').value);
+            const password = document.getElementById('loginPassword').value;
             const emailErr = document.getElementById('loginEmailError');
-            if (emailErr) emailErr.innerText = '';
+            const passErr = document.getElementById('loginPasswordError');
 
-            if (!isValidEmail(email)) {
-                if (emailErr) emailErr.innerText = 'Please enter a valid email address.';
-                return;
-            }
+            ValidationUI.clearError(emailErr);
+            ValidationUI.clearError(passErr);
+
+            const vEmail = Validator.email(email);
+            if (!vEmail.valid) return ValidationUI.showError(emailErr, vEmail.message);
+
+            if (!password) return ValidationUI.showError(passErr, 'Password is required.');
 
             const maint = await Auth._checkMaintenance(email);
             if (maint.active) {
                 alert(maint.message);
                 return;
             }
-
-            const password = document.getElementById('loginPassword').value;
-            const passErr = document.getElementById('loginPasswordError');
-            if (emailErr) emailErr.innerText = '';
-            if (passErr) passErr.innerText = '';
 
             const user = await SupabaseDB.getUser(email);
 
@@ -565,12 +556,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const customReason = document.getElementById('resetCustomReason')?.value || '';
 
             const err = document.getElementById('resetError');
-            if (err) err.innerText = '';
+            ValidationUI.clearError(err);
 
-            if (!isValidEmail(email)) {
-                if (err) err.innerText = 'Please enter a valid email address.';
-                return;
-            }
+            const vEmail = Validator.email(email);
+            if (!vEmail.valid) return ValidationUI.showError(err, vEmail.message);
 
             if (!reason) {
                 if (err) err.innerText = 'Please select a reason.';
@@ -634,13 +623,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             if (newPass !== confirm) {
-                if (err) err.innerText = 'Passwords do not match.';
-                return;
+                return ValidationUI.showError(err, 'Passwords do not match.');
             }
-            if (!isStrongPassword(newPass)) {
-                if (err) err.innerText = 'Password must be at least 8 characters long and include an uppercase letter, a lowercase letter, a number, and a special character.';
-                return;
-            }
+            const vPass = Validator.password(newPass);
+            if (!vPass.valid) return ValidationUI.showError(err, vPass.message);
 
             // Prevent using the same temporary password
             const hashedNew = await window.hashPassword(newPass, freshUser.email);

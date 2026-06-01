@@ -32,8 +32,7 @@ window.normalizeEmail = function(email) {
 };
 
 window.isValidEmail = function(email) {
-    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return re.test(email);
+    return Validator.email(email).valid;
 };
 
 window.isValidUrl = function(string) {
@@ -53,12 +52,7 @@ window.extractYoutubeId = function(url) {
 };
 
 window.isStrongPassword = function(pass) {
-    if (!pass || pass.length < 8) return false;
-    const hasUpper = /[A-Z]/.test(pass);
-    const hasLower = /[a-z]/.test(pass);
-    const hasNumber = /\d/.test(pass);
-    const hasSpecial = /[!@#$%^&*(),.?":{}|<>[\]\\/`~;:'"-=+]/.test(pass);
-    return hasUpper && hasLower && hasNumber && hasSpecial;
+    return Validator.password(pass).valid;
 };
 
 /**
@@ -100,6 +94,51 @@ window.generateTempPassword = function() {
 
     return pwd.join('');
 };
+
+const Validator = {
+    email(email) {
+        const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!email) return { valid: false, message: 'Email is required.' };
+        if (!re.test(email)) return { valid: false, message: 'Please enter a valid email address.' };
+        return { valid: true };
+    },
+    password(pass) {
+        if (!pass) return { valid: false, message: 'Password is required.' };
+        if (pass.length < 8) return { valid: false, message: 'Password must be at least 8 characters long.' };
+        if (!/[A-Z]/.test(pass)) return { valid: false, message: 'Password must include an uppercase letter.' };
+        if (!/[a-z]/.test(pass)) return { valid: false, message: 'Password must include a lowercase letter.' };
+        if (!/\d/.test(pass)) return { valid: false, message: 'Password must include a number.' };
+        if (!/[!@#$%^&*(),.?":{}|<>[\]\\/`~;:'"-=+]/.test(pass)) return { valid: false, message: 'Password must include a special character.' };
+        return { valid: true };
+    },
+    phone(phone) {
+        if (!phone) return { valid: true }; // Optional field in most places
+        const re = /^\+?[\d\s-]{10,}$/;
+        if (!re.test(phone)) return { valid: false, message: 'Please enter a valid phone number (at least 10 digits).' };
+        return { valid: true };
+    },
+    fullName(name) {
+        if (!name || name.trim().length < 2) return { valid: false, message: 'Full name is required (min 2 chars).' };
+        return { valid: true };
+    }
+};
+window.Validator = Validator;
+
+const ValidationUI = {
+    showError(errorEl, message) {
+        if (typeof errorEl === 'string') errorEl = document.getElementById(errorEl);
+        if (!errorEl) return;
+        errorEl.innerText = message;
+        errorEl.style.display = 'block';
+    },
+    clearError(errorEl) {
+        if (typeof errorEl === 'string') errorEl = document.getElementById(errorEl);
+        if (!errorEl) return;
+        errorEl.innerText = '';
+        errorEl.style.display = 'none';
+    }
+};
+window.ValidationUI = ValidationUI;
 
 window.updatePasswordStrength = function(password, meterId = 'passwordStrength', containerId = 'passwordStrengthContainer') {
     const meter = document.getElementById(meterId);
@@ -2128,7 +2167,11 @@ const SettingsManager = {
         const name = document.getElementById('settingsFullName').value.trim();
         const phone = document.getElementById('settingsPhone').value.trim();
 
-        if (!name) return UI.showNotification('Name is required.', 'warn');
+        const vName = Validator.fullName(name);
+        if (!vName.valid) return UI.showNotification(vName.message, 'warn');
+
+        const vPhone = Validator.phone(phone);
+        if (!vPhone.valid) return UI.showNotification(vPhone.message, 'warn');
 
         btn.disabled = true;
         btn.textContent = 'Saving...';
@@ -2164,9 +2207,12 @@ const SettingsManager = {
         const n1 = document.getElementById('newPass').value;
         const n2 = document.getElementById('confirmPass').value;
 
-        if (!curr || !n1 || !n2) return UI.showNotification('All password fields are required.', 'warn');
+        if (!curr) return UI.showNotification('Current password is required.', 'warn');
+
+        const vPass = Validator.password(n1);
+        if (!vPass.valid) return UI.showNotification(vPass.message, 'warn');
+
         if (n1 !== n2) return UI.showNotification('New passwords do not match.', 'warn');
-        if (!isStrongPassword(n1)) return UI.showNotification('New password does not meet security requirements.', 'warn');
 
         btn.disabled = true;
         btn.textContent = 'Updating...';
@@ -2194,16 +2240,14 @@ const SettingsManager = {
             fresh.metadata = { ...fresh.metadata, last_invalidation_reason: 'password_change' };
 
             await SupabaseDB.saveUser(fresh);
-            window.setSupabaseSession(sid);
-            await SessionManager.setCurrentUser(fresh);
 
-            UI.showNotification('Password updated. You have been re-authenticated.', 'success');
+            UI.showNotification('Password updated. Please login again with your new credentials.', 'success');
 
-            // Clear fields
-            document.getElementById('currPass').value = '';
-            document.getElementById('newPass').value = '';
-            document.getElementById('confirmPass').value = '';
-            document.getElementById('passwordStrengthContainer').style.display = 'none';
+            // Force re-authentication (Security Best Practice)
+            setTimeout(async () => {
+                await SessionManager.clearCurrentUser('password_change');
+                window.location.href = 'index.html?reason=' + encodeURIComponent('Your password was changed. Please login again.');
+            }, 2000);
 
         } catch (e) {
             UI.showNotification(e.message, 'error');

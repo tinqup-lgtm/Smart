@@ -2197,7 +2197,7 @@ window.navigateQuestion = navigateQuestion;
 
 let quizDebounceTimer = null;
 async function autoSubmitQuiz() {
-  if (!currentSubmission || currentSubmission.status !== 'in-progress') return;
+  if (isSubmittingQuiz || !currentSubmission || currentSubmission.status !== 'in-progress') return;
 
   const statusEl = document.getElementById('quizSaveStatus');
   if (statusEl) statusEl.textContent = 'Unsaved changes...';
@@ -2221,9 +2221,12 @@ async function autoSubmitQuiz() {
 
 async function submitQuiz(isAuto = false) {
   if (isSubmittingQuiz) return;
-  if (!isAuto && !confirm('Are you sure you want to submit your quiz?')) return;
-
   isSubmittingQuiz = true;
+
+  if (!isAuto && !confirm('Are you sure you want to submit your quiz?')) {
+      isSubmittingQuiz = false;
+      return;
+  }
 
   const btn = document.getElementById('finalSubmitBtn');
   if (btn) {
@@ -2249,6 +2252,9 @@ async function submitQuiz(isAuto = false) {
     clearTimeout(quizDebounceTimer);
     quizDebounceTimer = null;
   }
+
+  // Immediately update status in-memory to prevent autosave races
+  if (currentSubmission) currentSubmission.status = 'submitted';
 
   let user;
   try {
