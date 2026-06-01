@@ -2221,9 +2221,12 @@ async function autoSubmitQuiz() {
 
 async function submitQuiz(isAuto = false) {
   if (isSubmittingQuiz) return;
-  if (!isAuto && !confirm('Are you sure you want to submit your quiz?')) return;
-
   isSubmittingQuiz = true;
+
+  if (!isAuto && !confirm('Are you sure you want to submit your quiz?')) {
+      isSubmittingQuiz = false;
+      return;
+  }
 
   const btn = document.getElementById('finalSubmitBtn');
   if (btn) {
