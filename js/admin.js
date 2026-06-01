@@ -1,25 +1,31 @@
+/**
+ * Utility fallbacks to ensure runtime safety if core.js is not loaded.
+ */
+const escapeHtml = window.escapeHtml || ((s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
+const escapeAttr = window.escapeAttr || ((s) => String(s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
+
 const BACKUP_CONFIG = {
     version: '1.1.2',
     tables: [
         { name: 'users', onConflict: 'email', orderBy: 'email', dependencies: [] },
         { name: 'courses', onConflict: 'id', orderBy: 'id', dependencies: [{ table: 'users', field: 'teacher_email', optional: true }] },
-        { name: 'topics', onConflict: 'id', orderBy: 'order_index', dependencies: [{ table: 'courses', field: 'course_id' }] },
-        { name: 'lessons', onConflict: 'id', orderBy: 'order_index', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'topics', field: 'topic_id', optional: true }] },
-        { name: 'assignments', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'courses', field: 'course_id' }] },
-        { name: 'quizzes', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }] },
-        { name: 'live_classes', onConflict: 'id', orderBy: 'start_at', dependencies: [{ table: 'courses', field: 'course_id' }] },
-        { name: 'materials', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }] },
+        { name: 'topics', onConflict: 'id', orderBy: 'order_index', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
+        { name: 'lessons', onConflict: 'id', orderBy: 'order_index', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'topics', field: 'topic_id', optional: true }, { table: 'users', field: 'teacher_email', optional: true }] },
+        { name: 'assignments', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
+        { name: 'quizzes', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
+        { name: 'live_classes', onConflict: 'id', orderBy: 'start_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
+        { name: 'materials', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'enrollments', onConflict: 'course_id,student_email', orderBy: 'enrolled_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'student_email' }] },
-        { name: 'submissions', onConflict: 'id', orderBy: 'submitted_at', dependencies: [{ table: 'assignments', field: 'assignment_id' }, { table: 'users', field: 'student_email' }] },
-        { name: 'quiz_submissions', onConflict: 'id', orderBy: 'started_at', dependencies: [{ table: 'quizzes', field: 'quiz_id' }, { table: 'users', field: 'student_email' }] },
-        { name: 'attendance', onConflict: 'id', orderBy: 'join_time', dependencies: [{ table: 'live_classes', field: 'live_class_id' }, { table: 'users', field: 'student_email' }] },
-        { name: 'discussions', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }, { table: 'discussions', field: 'parent_id', optional: true, self: true }] },
+        { name: 'submissions', onConflict: 'id', orderBy: 'submitted_at', dependencies: [{ table: 'assignments', field: 'assignment_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }, { table: 'courses', field: 'course_id', optional: true }] },
+        { name: 'quiz_submissions', onConflict: 'id', orderBy: 'started_at', dependencies: [{ table: 'quizzes', field: 'quiz_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }, { table: 'courses', field: 'course_id', optional: true }] },
+        { name: 'attendance', onConflict: 'id', orderBy: 'join_time', dependencies: [{ table: 'live_classes', field: 'live_class_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }, { table: 'courses', field: 'course_id', optional: true }] },
+        { name: 'discussions', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }, { table: 'users', field: 'teacher_email', optional: true }, { table: 'discussions', field: 'parent_id', optional: true, self: true }] },
         { name: 'notifications', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'users', field: 'user_email' }] },
-        { name: 'broadcasts', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id', optional: true }] },
+        { name: 'broadcasts', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id', optional: true }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'planner', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'users', field: 'user_email' }] },
-        { name: 'certificates', onConflict: 'id', orderBy: 'issued_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'student_email' }] },
-        { name: 'study_sessions', onConflict: 'id', orderBy: 'started_at', dependencies: [{ table: 'users', field: 'user_email' }, { table: 'courses', field: 'course_id' }] },
-        { name: 'violations', onConflict: 'id', orderBy: 'timestamp', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }] },
+        { name: 'certificates', onConflict: 'id', orderBy: 'issued_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }] },
+        { name: 'study_sessions', onConflict: 'id', orderBy: 'started_at', dependencies: [{ table: 'users', field: 'user_email' }, { table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
+        { name: 'violations', onConflict: 'id', orderBy: 'timestamp', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'invites', onConflict: 'token', orderBy: 'token', dependencies: [{ table: 'users', field: 'created_by' }] },
         { name: 'support_tickets', onConflict: 'id', orderBy: 'created_at', dependencies: [] },
         { name: 'maintenance', onConflict: 'id', orderBy: 'id', dependencies: [] }
@@ -271,7 +277,13 @@ window.renderCourses = renderCourses;
 window.deleteCourse = deleteCourse;
 window.showChangeOwnerModal = showChangeOwnerModal;
 
-async function renderUsers() {
+let _userSearchTimer = null;
+async function renderUsers(isImmediate = false) {
+  if (!isImmediate) {
+      clearTimeout(_userSearchTimer);
+      _userSearchTimer = setTimeout(() => renderUsers(true), 300);
+      return;
+  }
 
   const content = document.getElementById('pageContent');
   if (!content) return;
@@ -279,6 +291,37 @@ async function renderUsers() {
   const searchTerm = document.getElementById('userSearch')?.value || '';
   const roleFilter = document.getElementById('roleFilter')?.value || 'all';
   const statusFilter = document.getElementById('statusFilter')?.value || 'all';
+
+  // If the shell isn't already rendered, build it first
+  if (!document.getElementById('usersList')) {
+    content.innerHTML = `
+    <section>
+      <div class="controls-row">
+        <input type="text" id="userSearch" class="search-input no-margin" placeholder="Search name/email..." value="${escapeAttr(searchTerm)}" oninput="renderUsers()">
+        <select id="roleFilter" class="filter-select no-margin" onchange="renderUsers(true)">
+          <option value="all" ${roleFilter === 'all' ? 'selected' : ''}>All Roles</option>
+          <option value="student" ${roleFilter === 'student' ? 'selected' : ''}>Student</option>
+          <option value="teacher" ${roleFilter === 'teacher' ? 'selected' : ''}>Teacher</option>
+          <option value="admin" ${roleFilter === 'admin' ? 'selected' : ''}>Admin</option>
+        </select>
+        <select id="statusFilter" class="filter-select no-margin" onchange="renderUsers(true)">
+          <option value="all" ${statusFilter === 'all' ? 'selected' : ''}>All Statuses</option>
+          <option value="active" ${statusFilter === 'active' ? 'selected' : ''}>Active Only</option>
+          <option value="inactive" ${statusFilter === 'inactive' ? 'selected' : ''}>Inactive Only</option>
+          <option value="flagged" ${statusFilter === 'flagged' ? 'selected' : ''}>Flagged Only</option>
+          <option value="locked" ${statusFilter === 'locked' ? 'selected' : ''}>Locked Only</option>
+        </select>
+        <button class="button secondary" style="width:auto;" onclick="exportUsersCSV()">Export CSV</button>
+      </div>
+      <div style="margin-bottom:20px; display:flex; gap:10px">
+        <button class="button" onclick="showCreateUserForm()" style="width:auto; padding: 10px 30px">+ Add User</button>
+        <button class="button" onclick="showInviteForm()" style="width:auto; padding: 10px 30px">✉️ Invite User</button>
+      </div>
+      
+      <div id="usersList" class="grid"></div>
+    </section>
+    `;
+  }
 
   try {
     const { data: users } = await SupabaseDB.getUsers({
@@ -297,42 +340,17 @@ async function renderUsers() {
         return true;
     });
 
-    content.innerHTML = `
-    <section>
-      <div class="controls-row">
-        <input type="text" id="userSearch" class="search-input no-margin" placeholder="Search name/email..." value="${escapeAttr(searchTerm)}" oninput="renderUsers()">
-        <select id="roleFilter" class="filter-select no-margin" onchange="renderUsers()">
-          <option value="all" ${roleFilter === 'all' ? 'selected' : ''}>All Roles</option>
-          <option value="student" ${roleFilter === 'student' ? 'selected' : ''}>Student</option>
-          <option value="teacher" ${roleFilter === 'teacher' ? 'selected' : ''}>Teacher</option>
-          <option value="admin" ${roleFilter === 'admin' ? 'selected' : ''}>Admin</option>
-        </select>
-        <select id="statusFilter" class="filter-select no-margin" onchange="renderUsers()">
-          <option value="all" ${statusFilter === 'all' ? 'selected' : ''}>All Statuses</option>
-          <option value="active" ${statusFilter === 'active' ? 'selected' : ''}>Active Only</option>
-          <option value="inactive" ${statusFilter === 'inactive' ? 'selected' : ''}>Inactive Only</option>
-          <option value="flagged" ${statusFilter === 'flagged' ? 'selected' : ''}>Flagged Only</option>
-          <option value="locked" ${statusFilter === 'locked' ? 'selected' : ''}>Locked Only</option>
-        </select>
-        <button class="button secondary" style="width:auto;" onclick="exportUsersCSV()">Export CSV</button>
-      </div>
-      <div style="margin-bottom:20px; display:flex; gap:10px">
-        <button class="button" onclick="showCreateUserForm()" style="width:auto; padding: 10px 30px">+ Add User</button>
-        <button class="button" onclick="showInviteForm()" style="width:auto; padding: 10px 30px">✉️ Invite User</button>
-      </div>
-      
-      <div id="usersList" class="grid"></div>
-    </section>
-    `;
     displayUsers(filtered);
   } catch (error) {
     console.error('Users error:', error);
-    content.innerHTML = `
+    const list = document.getElementById('usersList');
+    const target = list || content;
+    target.innerHTML = `
     <div class="card danger-border">
       <h3>Error Loading Users</h3>
       <p>Could not fetch user list from the server.</p>
       <div class="small danger-text">${escapeHtml(error.message)}</div>
-      <button class="button" onclick="renderUsers()" style="width:auto; margin-top:10px">Retry</button>
+      <button class="button" onclick="renderUsers(true)" style="width:auto; margin-top:10px">Retry</button>
     </div>`;
   }
 }
@@ -1348,16 +1366,14 @@ class BackupAuditManager {
         const recordMaps = {};
 
         // 1. Build lookup maps for all tables
-        // We collect all possible identifying fields (id, email, token) to handle mixed-key references.
+        // We collect all identifying fields into separate sets for precise cross-referencing.
         BACKUP_CONFIG.tables.forEach(config => {
             const data = tables[config.name] || [];
-            const identifiers = new Set();
-            data.forEach(r => {
-                if (r.id) identifiers.add(r.id);
-                if (r.email) identifiers.add(r.email);
-                if (r.token) identifiers.add(r.token);
-            });
-            recordMaps[config.name] = identifiers;
+            recordMaps[config.name] = {
+                ids: new Set(data.map(r => r.id).filter(Boolean)),
+                emails: new Set(data.map(r => r.email).filter(Boolean)),
+                tokens: new Set(data.map(r => r.token).filter(Boolean))
+            };
         });
 
         // 2. Perform dependency checks
@@ -1372,7 +1388,9 @@ class BackupAuditManager {
                         if (!dep.optional) {
                             issues.push({
                                 table: config.name,
-                                id: record.id || record.email || record.token,
+                                recordId: record.id,
+                                recordEmail: record.email,
+                                recordToken: record.token,
                                 type: 'MISSING_FIELD',
                                 field: dep.field,
                                 parentTable: dep.table,
@@ -1383,17 +1401,24 @@ class BackupAuditManager {
                         return;
                     }
 
-                    if (recordMaps[dep.table] && !recordMaps[dep.table].has(value)) {
-                        issues.push({
-                            table: config.name,
-                            id: record.id || record.email || record.token,
-                            type: 'ORPHANED_RECORD',
-                            field: dep.field,
-                            parentTable: dep.table,
-                            orphanId: value,
-                            isOptional: !!dep.optional,
-                            message: `References missing ${dep.table} (${value}) via field "${dep.field}".`
-                        });
+                    if (recordMaps[dep.table]) {
+                        const maps = recordMaps[dep.table];
+                        const exists = maps.ids.has(value) || maps.emails.has(value) || maps.tokens.has(value);
+
+                        if (!exists) {
+                            issues.push({
+                                table: config.name,
+                                recordId: record.id,
+                                recordEmail: record.email,
+                                recordToken: record.token,
+                                type: 'ORPHANED_RECORD',
+                                field: dep.field,
+                                parentTable: dep.table,
+                                orphanId: value,
+                                isOptional: !!dep.optional,
+                                message: `References missing ${dep.table} (${value}) via field "${dep.field}".`
+                            });
+                        }
                     }
                 });
             });
@@ -1410,7 +1435,15 @@ class BackupAuditManager {
         issues.forEach(issue => {
             if (issue.type === 'ORPHANED_RECORD' && issue.isOptional) {
                 const records = backupData.tables[issue.table];
-                const record = records?.find(r => (r.id || r.email || r.token) === issue.id);
+                if (!records) return;
+
+                const record = records.find(r => {
+                    if (issue.recordId && r.id === issue.recordId) return true;
+                    if (issue.recordEmail && r.email === issue.recordEmail) return true;
+                    if (issue.recordToken && r.token === issue.recordToken) return true;
+                    return false;
+                });
+
                 if (record && record[issue.field] !== null) {
                     record[issue.field] = null;
                     fixedCount++;
@@ -1434,7 +1467,8 @@ class BackupAuditManager {
             report += `**Table: ${table}** (${groups[table].length} issues)\n`;
             groups[table].slice(0, 10).forEach(issue => {
                 const prefix = issue.isOptional ? '[AUTO-FIXABLE] ' : '[FATAL] ';
-                report += `- ${prefix}[${issue.id}] ${issue.message}\n`;
+                const id = issue.recordId || issue.recordEmail || issue.recordToken || 'unknown';
+                report += `- ${prefix}[${id}] ${issue.message}\n`;
             });
             if (groups[table].length > 10) report += `- ... and ${groups[table].length - 10} more.\n`;
             report += '\n';
@@ -1532,7 +1566,7 @@ function validateBackup(data) {
     const missingTables = BACKUP_CONFIG.tables.filter(t => !data.tables[t.name]);
     if (missingTables.length > 0) {
         console.warn('Backup is missing data for tables:', missingTables.map(t => t.name));
-        if (missingTables.length > 5) return 'Invalid backup: Significant portion of data tables are missing.';
+        if (missingTables.length > 3) return 'Invalid backup: Significant portion of data tables are missing.';
     }
 
     return null;
@@ -1698,7 +1732,7 @@ async function renderSystem() {
           <div class="card">
             <h4>Application Info</h4>
             <ul class="small" style="list-style:none; padding:0">
-                <li class="mb-10"><strong>Version:</strong> SmartLMS v1.1.1-PROD</li>
+                <li class="mb-10"><strong>Version:</strong> SmartLMS v${BACKUP_CONFIG.version}-PROD</li>
                 <li class="mb-10"><strong>Environment:</strong> Production</li>
                 <li class="mb-10"><strong>Platform:</strong> Web / PWA</li>
                 <li><strong>Local Time:</strong> ${new Date().toLocaleString()}</li>

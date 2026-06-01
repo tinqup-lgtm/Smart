@@ -1932,6 +1932,9 @@ CREATE POLICY "Submissions: Select" ON submissions FOR SELECT USING (
   teacher_email = get_auth_email() OR
   (student_email = get_auth_email() AND EXISTS (SELECT 1 FROM courses WHERE id = submissions.course_id AND status = 'published'))
 );
+DROP POLICY IF EXISTS "Submissions: Admin Manage" ON submissions;
+CREATE POLICY "Submissions: Admin Manage" ON submissions FOR ALL USING (is_admin());
+
 DROP POLICY IF EXISTS "Submissions: Insert" ON submissions;
 CREATE POLICY "Submissions: Insert" ON submissions FOR INSERT WITH CHECK (
   student_email = get_auth_email() AND
@@ -1941,7 +1944,6 @@ CREATE POLICY "Submissions: Insert" ON submissions FOR INSERT WITH CHECK (
 );
 DROP POLICY IF EXISTS "Submissions: Update" ON submissions;
 CREATE POLICY "Submissions: Update" ON submissions FOR UPDATE USING (
-  is_admin() OR
   teacher_email = get_auth_email() OR
   (student_email = get_auth_email() AND EXISTS (SELECT 1 FROM courses WHERE id = submissions.course_id AND status = 'published'))
 );
@@ -1965,6 +1967,9 @@ CREATE POLICY "Attendance: Access" ON attendance FOR SELECT USING (
   teacher_email = get_auth_email() OR
   (student_email = get_auth_email() AND EXISTS (SELECT 1 FROM courses WHERE id = attendance.course_id AND status = 'published'))
 );
+DROP POLICY IF EXISTS "Attendance: Admin Manage" ON attendance;
+CREATE POLICY "Attendance: Admin Manage" ON attendance FOR ALL USING (is_admin());
+
 DROP POLICY IF EXISTS "Attendance: Insert" ON attendance;
 CREATE POLICY "Attendance: Insert" ON attendance FOR INSERT WITH CHECK (
   student_email = get_auth_email() AND
@@ -1991,6 +1996,9 @@ CREATE POLICY "Quiz Submissions: Access" ON quiz_submissions FOR SELECT USING (
   teacher_email = get_auth_email() OR
   (student_email = get_auth_email() AND EXISTS (SELECT 1 FROM courses WHERE id = quiz_submissions.course_id AND status = 'published'))
 );
+DROP POLICY IF EXISTS "Quiz Submissions: Admin Manage" ON quiz_submissions;
+CREATE POLICY "Quiz Submissions: Admin Manage" ON quiz_submissions FOR ALL USING (is_admin());
+
 DROP POLICY IF EXISTS "Quiz Submissions: Insert" ON quiz_submissions;
 CREATE POLICY "Quiz Submissions: Insert" ON quiz_submissions FOR INSERT WITH CHECK (
   student_email = get_auth_email() AND
@@ -2000,7 +2008,6 @@ CREATE POLICY "Quiz Submissions: Insert" ON quiz_submissions FOR INSERT WITH CHE
 );
 DROP POLICY IF EXISTS "Quiz Submissions: Update" ON quiz_submissions;
 CREATE POLICY "Quiz Submissions: Update" ON quiz_submissions FOR UPDATE USING (
-  is_admin() OR
   teacher_email = get_auth_email() OR
   (student_email = get_auth_email() AND EXISTS (SELECT 1 FROM courses WHERE id = quiz_submissions.course_id AND status = 'published'))
 );
@@ -2079,6 +2086,9 @@ CREATE POLICY "Violations: User Access" ON violations FOR SELECT USING (
   teacher_email = get_auth_email() OR
   (user_email = get_auth_email() AND EXISTS (SELECT 1 FROM courses WHERE id = violations.course_id AND status = 'published'))
 );
+DROP POLICY IF EXISTS "Violations: Admin Manage" ON violations;
+CREATE POLICY "Violations: Admin Manage" ON violations FOR ALL USING (is_admin());
+
 DROP POLICY IF EXISTS "Violations: Insert" ON violations;
 CREATE POLICY "Violations: Insert" ON violations FOR INSERT WITH CHECK (
   user_email = get_auth_email() AND
@@ -2087,7 +2097,7 @@ CREATE POLICY "Violations: Insert" ON violations FOR INSERT WITH CHECK (
 );
 DROP POLICY IF EXISTS "Violations: Delete" ON violations;
 CREATE POLICY "Violations: Delete" ON violations FOR DELETE USING (
-  is_admin() OR teacher_email = get_auth_email()
+  teacher_email = get_auth_email()
 );
 
 -- 18. Planner Table
@@ -2099,6 +2109,9 @@ DROP POLICY IF EXISTS "Study Sessions: User Access" ON study_sessions;
 CREATE POLICY "Study Sessions: User Access" ON study_sessions FOR SELECT USING (
   is_admin() OR teacher_email = get_auth_email() OR (user_email = get_auth_email() AND EXISTS (SELECT 1 FROM courses WHERE id = study_sessions.course_id AND status = 'published'))
 );
+DROP POLICY IF EXISTS "Study Sessions: Admin Manage" ON study_sessions;
+CREATE POLICY "Study Sessions: Admin Manage" ON study_sessions FOR ALL USING (is_admin());
+
 DROP POLICY IF EXISTS "Study Sessions: Insert" ON study_sessions;
 CREATE POLICY "Study Sessions: Insert" ON study_sessions FOR INSERT WITH CHECK (
   user_email = get_auth_email() AND
@@ -2113,6 +2126,8 @@ CREATE POLICY "Certificates: User Access" ON certificates FOR SELECT USING (
   teacher_email = get_auth_email() OR
   (student_email = get_auth_email() AND EXISTS (SELECT 1 FROM courses WHERE id = certificates.course_id AND status = 'published'))
 );
+DROP POLICY IF EXISTS "Certificates: Admin Manage" ON certificates;
+CREATE POLICY "Certificates: Admin Manage" ON certificates FOR ALL USING (is_admin());
 
 -- 21. Invites Table
 DROP POLICY IF EXISTS "Invites: Manage for Admins" ON invites;
