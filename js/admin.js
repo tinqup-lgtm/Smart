@@ -952,63 +952,73 @@ async function updateSidebarBadges() {
 }
 
 async function approveReset(email) {
+  // Find buttons to handle loading state and prevent race conditions
+  const row = document.querySelector(`button[onclick*="'${email}'"]`)?.closest('tr');
+  const buttons = row ? row.querySelectorAll('button') : [];
+  const approveBtn = Array.from(buttons).find(b => b.textContent.includes('Approve'));
+  const originalText = approveBtn ? approveBtn.textContent : 'Approve';
+
   try {
-    const normalizedEmail = normalizeEmail(email);
-    const user = await SupabaseDB.getUser(normalizedEmail);
-    if (user && user.reset_request) {
-      const tempPassword = window.generateTempPassword();
-
-      // Hash the temporary password using normalized email as salt
-      const hashedTemp = await window.hashPassword(tempPassword, normalizedEmail);
-
-      user.reset_request.status = 'approved';
-      user.reset_request.temp_password = hashedTemp;
-      user.reset_request.temp_password_plain = tempPassword;
-      user.reset_request.expires_at = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
-
-      // Ensure user.password is also updated to the hashed temp password so login RPC works
-      user.password = hashedTemp;
-
-      if (await SupabaseDB.saveUser(user)) {
-        const backdrop = document.createElement('div');
-        backdrop.className = 'modal-backdrop';
-        backdrop.style.display = 'flex';
-        backdrop.innerHTML = `
-            <div class="modal" style="max-width:400px; text-align:center">
-                <h3>Reset Approved</h3>
-                <p>Reset request approved. Temporary password:</p>
-                <div class="card mb-20" style="background:var(--bg-light); font-family:monospace; font-size:1.5rem; letter-spacing:2px">
-                    ${tempPassword}
-                </div>
-                <p class="small danger-text bold">PLEASE COPY THIS NOW. IT WILL NOT BE SHOWN AGAIN.</p>
-                <button class="button mt-20" onclick="this.closest('.modal-backdrop').remove()">Done</button>
-            </div>
-        `;
-        document.body.appendChild(backdrop);
-        renderResets();
-      }
+    if (approveBtn) {
+        approveBtn.disabled = true;
+        approveBtn.textContent = 'Approving...';
     }
+    buttons.forEach(b => b.disabled = true);
+
+    const tempPassword = await SupabaseDB.approvePasswordReset(email);
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop';
+    backdrop.style.display = 'flex';
+    backdrop.innerHTML = `
+        <div class="modal" style="max-width:400px; text-align:center">
+            <h3>Reset Approved</h3>
+            <p>Reset request approved. Temporary password:</p>
+            <div class="card mb-20" style="background:var(--bg-light); font-family:monospace; font-size:1.5rem; letter-spacing:2px">
+                ${tempPassword}
+            </div>
+            <p class="small danger-text bold">PLEASE COPY THIS NOW. IT WILL NOT BE SHOWN AGAIN.</p>
+            <button class="button mt-20" onclick="this.closest('.modal-backdrop').remove()">Done</button>
+        </div>
+    `;
+    document.body.appendChild(backdrop);
+    renderResets();
   } catch (e) {
     UI.showNotification('Error approving reset: ' + e.message, 'error');
+    if (approveBtn) {
+        approveBtn.disabled = false;
+        approveBtn.textContent = originalText;
+    }
+    buttons.forEach(b => b.disabled = false);
   }
 }
 
 async function denyReset(email) {
   const reason = await UI.prompt("Enter denial reason:", "Verification failed", "Deny Reset Request");
-  if (reason !== null) {
-    try {
-      const user = await SupabaseDB.getUser(email);
-      if (user && user.reset_request) {
-        user.reset_request.status = 'denied';
-        user.reset_request.denial_reason = reason;
-        if (await SupabaseDB.saveUser(user)) {
-          UI.showNotification('Reset request denied', 'info');
-          renderResets();
-        }
-      }
-    } catch (e) {
-      UI.showNotification('Error denying reset: ' + e.message, 'error');
+  if (reason === null) return;
+
+  const row = document.querySelector(`button[onclick*="'${email}'"]`)?.closest('tr');
+  const buttons = row ? row.querySelectorAll('button') : [];
+  const denyBtn = Array.from(buttons).find(b => b.textContent.includes('Deny'));
+  const originalText = denyBtn ? denyBtn.textContent : 'Deny';
+
+  try {
+    if (denyBtn) {
+        denyBtn.disabled = true;
+        denyBtn.textContent = 'Denying...';
     }
+    buttons.forEach(b => b.disabled = true);
+
+    await SupabaseDB.denyPasswordReset(email, reason);
+    UI.showNotification('Reset request denied', 'info');
+    renderResets();
+  } catch (e) {
+    UI.showNotification('Error denying reset: ' + e.message, 'error');
+    if (denyBtn) {
+        denyBtn.disabled = false;
+        denyBtn.textContent = originalText;
+    }
+    buttons.forEach(b => b.disabled = false);
   }
 }
 

@@ -102,13 +102,18 @@ class SupabaseDB {
     static _sanitizePayload(payload) {
         if (!payload || typeof payload !== 'object') return payload;
         const sanitized = { ...payload };
+
+        // 1. Explicitly strip virtual/internal fields that don't belong in database tables
+        const VIRTUAL_FIELDS = ['password', 'session_id', 'has_secret'];
+        VIRTUAL_FIELDS.forEach(field => delete sanitized[field]);
+
         Object.keys(sanitized).forEach(key => {
             const value = sanitized[key];
-            // 1. Remove joined objects/arrays that are NOT known JSONB/Array columns
+            // 2. Remove joined objects/arrays that are NOT known JSONB/Array columns
             if (value !== null && typeof value === 'object' && !this.JSONB_COLUMNS.includes(key)) {
                 delete sanitized[key];
             }
-            // 2. Convert empty strings to null for better database integrity (especially FKs)
+            // 3. Convert empty strings to null for better database integrity (especially FKs)
             if (sanitized[key] === '') {
                 sanitized[key] = null;
             }
@@ -285,9 +290,10 @@ class SupabaseDB {
     }
 
     static async updateUserEmail(oldEmail, newEmail, userData) {
+        const sanitized = this._sanitizePayload({ ...userData, email: newEmail });
         const { data, error } = await supabaseClient
             .from('users')
-            .update({ ...userData, email: newEmail })
+            .update(sanitized)
             .eq('email', oldEmail)
             .select();
         if (error) throw error;
@@ -1028,6 +1034,60 @@ class SupabaseDB {
         });
         if (error) throw error;
         return data;
+    }
+
+    /**
+     * Approves a pending password reset request.
+     * Generates a temporary password and updates the user's secret.
+     */
+    static async approvePasswordReset(email) {
+        const normalizedEmail = normalizeEmail(email);
+        const user = await this.getUser(normalizedEmail, true);
+        if (!user || !user.reset_request) {
+            throw new Error('No pending reset request found for this user.');
+        }
+
+        const tempPassword = window.generateTempPassword();
+        const hashedTemp = await window.hashPassword(tempPassword, normalizedEmail);
+
+        // Update the user record with the approval details
+        const updatedUser = {
+            ...user,
+            password: hashedTemp,
+            reset_request: {
+                ...user.reset_request,
+                status: 'approved',
+                temp_password: hashedTemp,
+                temp_password_plain: tempPassword,
+                expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString()
+            }
+        };
+
+        // saveUser handles both the sanitized users table update and the secure secrets update
+        await this.saveUser(updatedUser);
+        return tempPassword;
+    }
+
+    /**
+     * Denies a pending password reset request.
+     */
+    static async denyPasswordReset(email, reason) {
+        const normalizedEmail = normalizeEmail(email);
+        const user = await this.getUser(normalizedEmail, true);
+        if (!user || !user.reset_request) {
+            throw new Error('No pending reset request found for this user.');
+        }
+
+        const updatedUser = {
+            ...user,
+            reset_request: {
+                ...user.reset_request,
+                status: 'denied',
+                denial_reason: reason
+            }
+        };
+
+        await this.saveUser(updatedUser);
     }
 
     static async requestPasswordReset(email, reason, customReason = '') {
