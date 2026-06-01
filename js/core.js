@@ -120,6 +120,12 @@ const Validator = {
     fullName(name) {
         if (!name || name.trim().length < 2) return { valid: false, message: 'Full name is required (min 2 chars).' };
         return { valid: true };
+    },
+    required(val, fieldName = 'Field') {
+        if (!val || (typeof val === 'string' && val.trim().length < 2)) {
+            return { valid: false, message: `${fieldName} is required (min 2 chars).` };
+        }
+        return { valid: true };
     }
 };
 window.Validator = Validator;

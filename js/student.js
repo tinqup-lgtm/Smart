@@ -2223,7 +2223,12 @@ async function submitQuiz(isAuto = false) {
   if (isSubmittingQuiz) return;
   isSubmittingQuiz = true;
 
+  // Immediately update status in-memory to prevent autosave races even if isSubmittingQuiz flag is bypassed
+  const previousStatus = currentSubmission?.status;
+  if (currentSubmission) currentSubmission.status = 'submitted';
+
   if (!isAuto && !confirm('Are you sure you want to submit your quiz?')) {
+      if (currentSubmission) currentSubmission.status = previousStatus || 'in-progress';
       isSubmittingQuiz = false;
       return;
   }
@@ -2253,9 +2258,6 @@ async function submitQuiz(isAuto = false) {
     quizDebounceTimer = null;
   }
 
-  // Immediately update status in-memory to prevent autosave races
-  if (currentSubmission) currentSubmission.status = 'submitted';
-
   let user;
   try {
     user = await SessionManager.getCurrentUser();
@@ -2264,12 +2266,16 @@ async function submitQuiz(isAuto = false) {
     const timeSpent = currentSubmission ? Math.round((now - new Date(currentSubmission.started_at)) / 1000) : 0;
 
     // Authoritative submission via RPC
-    currentSubmission = await SupabaseDB.submitQuizAttempt(currentSubmission.id, answers, timeSpent);
+    const result = await SupabaseDB.submitQuizAttempt(currentSubmission.id, answers, timeSpent);
+    currentSubmission = result;
 
   } catch (err) {
       console.error('Quiz submission failed:', err);
-      UI.showNotification('Quiz Submission Failed: ' + (err.message || 'Unknown error'));
-      return;
+      // Revert status to allow retry and continued autosave
+      if (currentSubmission) currentSubmission.status = 'in-progress';
+      UI.showNotification('Quiz Submission Failed: ' + (err.message || 'Unknown error'), 'error');
+      // If auto-submit failed, we might want to re-initiate anti-cheat or timer?
+      // For now, just ensuring UI is unlocked.
   } finally {
       isSubmittingQuiz = false;
       if (!currentSubmission || currentSubmission.status !== 'submitted') {
@@ -2277,9 +2283,16 @@ async function submitQuiz(isAuto = false) {
               btn.disabled = false;
               btn.textContent = 'Submit Quiz';
           }
+          if (listBtn) {
+              listBtn.disabled = false;
+              listBtn.textContent = 'Retry Submission';
+          }
           UI.hideLoading('quizArea');
       }
   }
+
+  // If submission failed, stop execution here
+  if (!currentSubmission || currentSubmission.status !== 'submitted') return;
 
   if (currentQuiz) await SupabaseDB.updateCourseProgress(currentQuiz.course_id, user.email);
 

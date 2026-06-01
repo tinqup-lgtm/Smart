@@ -141,9 +141,13 @@ function showCourseForm(course = null) {
       const user = await SessionManager.getCurrentUser();
       const courseId = isEdit ? course.id : crypto.randomUUID();
 
+      const title = document.getElementById('courseTitle').value.trim();
+      const vTitle = Validator.required(title, 'Course title');
+      if (!vTitle.valid) return UI.showNotification(vTitle.message, 'warn');
+
       const courseData = {
         id: courseId,
-        title: document.getElementById('courseTitle').value,
+        title: title,
         description: document.getElementById('courseDescription').value,
         enrollment_id: document.getElementById('courseEnrollmentId').value || null,
         status: document.getElementById('courseStatus').value,
@@ -308,6 +312,15 @@ async function showLessonForm(courseId, lesson = null) {
     btn.textContent = 'Saving...';
 
     try {
+      const title = document.getElementById('lessonTitle').value.trim();
+      const vTitle = Validator.required(title, 'Lesson title');
+      if (!vTitle.valid) {
+          UI.showNotification(vTitle.message, 'warn');
+          btn.disabled = false;
+          btn.textContent = originalText;
+          return;
+      }
+
       const videoUrl = document.getElementById('lessonVideoUrl').value || null;
       if (videoUrl && !isValidUrl(videoUrl)) {
           UI.showNotification('Please enter a valid URL for the video.', 'error');
@@ -392,12 +405,21 @@ function showTopicForm(courseId, topic = null) {
 
     try {
       const user = await SessionManager.getCurrentUser();
+      const title = document.getElementById('topicTitle').value.trim();
+      const vTitle = Validator.required(title, 'Topic title');
+      if (!vTitle.valid) {
+          UI.showNotification(vTitle.message, 'warn');
+          btn.disabled = false;
+          btn.textContent = originalText;
+          return;
+      }
+
       const data = {
           ...topic,
           id: isEdit ? topic.id : crypto.randomUUID(),
           course_id: courseId,
           teacher_email: user.email,
-          title: document.getElementById('topicTitle').value,
+          title: title,
           description: document.getElementById('topicDescription').value,
           order_index: parseInt(document.getElementById('topicOrder').value) || 0
       };
@@ -2285,6 +2307,10 @@ async function showQuizForm(quiz = null) {
       const user = await SessionManager.getCurrentUser();
 
       // Form Validation
+      const title = document.getElementById('quizTitle').value.trim();
+      const vTitle = Validator.required(title, 'Quiz title');
+      if (!vTitle.valid) throw new Error(vTitle.message);
+
       const timeLimit = parseInt(document.getElementById('quizLimit').value) || 0;
       const attemptsAllowed = parseInt(document.getElementById('quizAttempts').value) || 1;
       const passingScore = parseInt(document.getElementById('quizPassingScore').value) || 60;
@@ -2302,7 +2328,8 @@ async function showQuizForm(quiz = null) {
         const text = item.querySelector('.q-text').value.trim();
         const points = parseInt(item.querySelector('.q-points').value) || 0;
 
-        if (!text) throw new Error(`Question ${idx + 1} is missing text.`);
+        const vQText = Validator.required(text, `Question ${idx + 1} text`);
+        if (!vQText.valid) throw new Error(vQText.message);
         if (points < 0) throw new Error(`Question ${idx + 1} points cannot be negative.`);
 
         const qData = {

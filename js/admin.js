@@ -1842,6 +1842,11 @@ function showUserForm(user = null) {
 
       const normalizedEmail = normalizeEmail(email);
       let hashedPassword = isEdit ? user.password : '';
+
+      if (!isEdit && !password) {
+          return UI.showNotification('Password is required for new users.', 'warn');
+      }
+
       if (password) {
         const vPass = Validator.password(password);
         if (!vPass.valid) return UI.showNotification(vPass.message, 'warn');
@@ -1851,7 +1856,7 @@ function showUserForm(user = null) {
           ...user,
           full_name: fullName,
           email: normalizedEmail,
-          phone: document.getElementById('phone').value,
+          phone: phone,
           password: hashedPassword,
           role: document.getElementById('role').value,
           active: document.getElementById('active').checked
