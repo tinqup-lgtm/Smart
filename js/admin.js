@@ -1,28 +1,28 @@
 const BACKUP_CONFIG = {
-    version: '1.1.1',
+    version: '1.1.2',
     tables: [
-        { name: 'users', onConflict: 'email' },
-        { name: 'courses', onConflict: 'id' },
-        { name: 'topics', onConflict: 'id' },
-        { name: 'lessons', onConflict: 'id' },
-        { name: 'assignments', onConflict: 'id' },
-        { name: 'quizzes', onConflict: 'id' },
-        { name: 'live_classes', onConflict: 'id' },
-        { name: 'materials', onConflict: 'id' },
-        { name: 'enrollments', onConflict: 'course_id,student_email' },
-        { name: 'submissions', onConflict: 'id' },
-        { name: 'quiz_submissions', onConflict: 'id' },
-        { name: 'attendance', onConflict: 'id' },
-        { name: 'discussions', onConflict: 'id' },
-        { name: 'notifications', onConflict: 'id' },
-        { name: 'broadcasts', onConflict: 'id' },
-        { name: 'planner', onConflict: 'id' },
-        { name: 'certificates', onConflict: 'id' },
-        { name: 'study_sessions', onConflict: 'id' },
-        { name: 'violations', onConflict: 'id' },
-        { name: 'invites', onConflict: 'token' },
-        { name: 'support_tickets', onConflict: 'id' },
-        { name: 'maintenance', onConflict: 'id' }
+        { name: 'users', onConflict: 'email', orderBy: 'email', dependencies: [] },
+        { name: 'courses', onConflict: 'id', orderBy: 'id', dependencies: [{ table: 'users', field: 'teacher_email', optional: true }] },
+        { name: 'topics', onConflict: 'id', orderBy: 'order_index', dependencies: [{ table: 'courses', field: 'course_id' }] },
+        { name: 'lessons', onConflict: 'id', orderBy: 'order_index', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'topics', field: 'topic_id', optional: true }] },
+        { name: 'assignments', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'courses', field: 'course_id' }] },
+        { name: 'quizzes', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }] },
+        { name: 'live_classes', onConflict: 'id', orderBy: 'start_at', dependencies: [{ table: 'courses', field: 'course_id' }] },
+        { name: 'materials', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }] },
+        { name: 'enrollments', onConflict: 'course_id,student_email', orderBy: 'enrolled_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'student_email' }] },
+        { name: 'submissions', onConflict: 'id', orderBy: 'submitted_at', dependencies: [{ table: 'assignments', field: 'assignment_id' }, { table: 'users', field: 'student_email' }] },
+        { name: 'quiz_submissions', onConflict: 'id', orderBy: 'started_at', dependencies: [{ table: 'quizzes', field: 'quiz_id' }, { table: 'users', field: 'student_email' }] },
+        { name: 'attendance', onConflict: 'id', orderBy: 'join_time', dependencies: [{ table: 'live_classes', field: 'live_class_id' }, { table: 'users', field: 'student_email' }] },
+        { name: 'discussions', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }, { table: 'discussions', field: 'parent_id', optional: true, self: true }] },
+        { name: 'notifications', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'users', field: 'user_email' }] },
+        { name: 'broadcasts', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id', optional: true }] },
+        { name: 'planner', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'users', field: 'user_email' }] },
+        { name: 'certificates', onConflict: 'id', orderBy: 'issued_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'student_email' }] },
+        { name: 'study_sessions', onConflict: 'id', orderBy: 'started_at', dependencies: [{ table: 'users', field: 'user_email' }, { table: 'courses', field: 'course_id' }] },
+        { name: 'violations', onConflict: 'id', orderBy: 'timestamp', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }] },
+        { name: 'invites', onConflict: 'token', orderBy: 'token', dependencies: [{ table: 'users', field: 'created_by' }] },
+        { name: 'support_tickets', onConflict: 'id', orderBy: 'created_at', dependencies: [] },
+        { name: 'maintenance', onConflict: 'id', orderBy: 'id', dependencies: [] }
     ]
 };
 
@@ -1338,8 +1338,115 @@ async function executeCleanup() {
   }
 }
 
+/**
+ * Advanced Audit Manager for verifying backup data integrity.
+ */
+class BackupAuditManager {
+    static audit(backupData) {
+        const tables = backupData.tables;
+        const issues = [];
+        const recordMaps = {};
+
+        // 1. Build lookup maps for all tables
+        // We collect all possible identifying fields (id, email, token) to handle mixed-key references.
+        BACKUP_CONFIG.tables.forEach(config => {
+            const data = tables[config.name] || [];
+            const identifiers = new Set();
+            data.forEach(r => {
+                if (r.id) identifiers.add(r.id);
+                if (r.email) identifiers.add(r.email);
+                if (r.token) identifiers.add(r.token);
+            });
+            recordMaps[config.name] = identifiers;
+        });
+
+        // 2. Perform dependency checks
+        BACKUP_CONFIG.tables.forEach(config => {
+            const records = tables[config.name] || [];
+            if (!config.dependencies) return;
+
+            records.forEach(record => {
+                config.dependencies.forEach(dep => {
+                    const value = record[dep.field];
+                    if (!value) {
+                        if (!dep.optional) {
+                            issues.push({
+                                table: config.name,
+                                id: record.id || record.email || record.token,
+                                type: 'MISSING_FIELD',
+                                field: dep.field,
+                                parentTable: dep.table,
+                                isOptional: false,
+                                message: `Required field "${dep.field}" is empty.`
+                            });
+                        }
+                        return;
+                    }
+
+                    if (recordMaps[dep.table] && !recordMaps[dep.table].has(value)) {
+                        issues.push({
+                            table: config.name,
+                            id: record.id || record.email || record.token,
+                            type: 'ORPHANED_RECORD',
+                            field: dep.field,
+                            parentTable: dep.table,
+                            orphanId: value,
+                            isOptional: !!dep.optional,
+                            message: `References missing ${dep.table} (${value}) via field "${dep.field}".`
+                        });
+                    }
+                });
+            });
+        });
+
+        return issues;
+    }
+
+    /**
+     * Attempts to resolve orphans by nullifying optional missing references.
+     */
+    static sanitizeOrphans(backupData, issues) {
+        let fixedCount = 0;
+        issues.forEach(issue => {
+            if (issue.type === 'ORPHANED_RECORD' && issue.isOptional) {
+                const records = backupData.tables[issue.table];
+                const record = records?.find(r => (r.id || r.email || r.token) === issue.id);
+                if (record && record[issue.field] !== null) {
+                    record[issue.field] = null;
+                    fixedCount++;
+                }
+            }
+        });
+        return fixedCount;
+    }
+
+    static formatReport(issues) {
+        if (issues.length === 0) return 'No integrity issues found.';
+
+        const groups = {};
+        issues.forEach(i => {
+            if (!groups[i.table]) groups[i.table] = [];
+            groups[i.table].push(i);
+        });
+
+        let report = `### Backup Audit Report (${issues.length} issues found)\n\n`;
+        Object.keys(groups).forEach(table => {
+            report += `**Table: ${table}** (${groups[table].length} issues)\n`;
+            groups[table].slice(0, 10).forEach(issue => {
+                const prefix = issue.isOptional ? '[AUTO-FIXABLE] ' : '[FATAL] ';
+                report += `- ${prefix}[${issue.id}] ${issue.message}\n`;
+            });
+            if (groups[table].length > 10) report += `- ... and ${groups[table].length - 10} more.\n`;
+            report += '\n';
+        });
+
+        return report;
+    }
+}
+
 async function exportBackup() {
-  UI.showNotification('Preparing full system backup...', 'info');
+  const container = document.getElementById('mgt-area');
+  UI.showLoading('mgt-area', 'Preparing full system backup...');
   try {
     const backupData = {
         exportedAt: new Date().toISOString(),
@@ -1350,13 +1457,50 @@ async function exportBackup() {
     const totalTables = BACKUP_CONFIG.tables.length;
     for (let i = 0; i < totalTables; i++) {
         const config = BACKUP_CONFIG.tables[i];
+        const orderBy = config.orderBy || 'created_at';
+
+        UI.showLoading('mgt-area', `Exporting table ${i + 1}/${totalTables}: ${config.name}...`);
         try {
-            UI.showNotification(`Exporting table ${i + 1} of ${totalTables}: ${config.name}...`, 'info');
-            backupData.tables[config.name] = await SupabaseDB.getAllTableData(config.name);
+            backupData.tables[config.name] = await SupabaseDB.getAllTableData(config.name, orderBy);
         } catch (err) {
             console.warn(`Failed to export table ${config.name}:`, err);
             backupData.tables[config.name] = [];
         }
+    }
+
+    // Perform Integrity Audit
+    UI.showLoading('mgt-area', 'Auditing data integrity...');
+    const issues = BackupAuditManager.audit(backupData);
+
+    if (issues.length > 0) {
+        UI.hideLoading('mgt-area');
+        const report = BackupAuditManager.formatReport(issues);
+        console.warn('Backup audit failed:', issues);
+
+        const confirmRestore = await new Promise(resolve => {
+            const backdrop = document.createElement('div');
+            backdrop.className = 'modal-backdrop';
+            backdrop.style.display = 'flex';
+            backdrop.innerHTML = `
+                <div class="modal" style="max-width:600px">
+                    <h3>Backup Integrity Issues</h3>
+                    <p class="small mb-15">The system found ${issues.length} orphaned or incomplete records. Exporting this backup may result in errors during restoration.</p>
+                    <div class="card bg-light p-15 small mb-20" style="max-height:300px; overflow-y:auto; white-space: pre-wrap; font-family: monospace">
+                        ${escapeHtml(report)}
+                    </div>
+                    <div class="flex-end gap-10">
+                        <button class="button secondary w-auto" id="cancelExport">Cancel Export</button>
+                        <button class="button danger w-auto" id="ignoreExport">Export Anyway</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(backdrop);
+            document.getElementById('cancelExport').onclick = () => { backdrop.remove(); resolve(false); };
+            document.getElementById('ignoreExport').onclick = () => { backdrop.remove(); resolve(true); };
+        });
+
+        if (!confirmRestore) return;
+        UI.showLoading('mgt-area', 'Finalizing export...');
     }
 
     const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
@@ -1368,6 +1512,9 @@ async function exportBackup() {
     UI.showNotification('Full system backup exported successfully.', 'success');
   } catch (e) {
     UI.showNotification('Backup failed: ' + e.message, 'error');
+  } finally {
+    UI.hideLoading('mgt-area');
+    renderManagement();
   }
 }
 
@@ -1375,11 +1522,17 @@ function validateBackup(data) {
     if (!data || typeof data !== 'object') return 'Invalid backup format: Not an object.';
     if (!data.tables || typeof data.tables !== 'object') return 'Invalid backup format: Missing tables data.';
 
-    // Version check (allow minor differences but warn or block major ones)
     if (data.version) {
         const [major] = data.version.split('.');
         const [sysMajor] = BACKUP_CONFIG.version.split('.');
         if (major !== sysMajor) return `Incompatible backup version: System is v${BACKUP_CONFIG.version}, Backup is v${data.version}`;
+    }
+
+    // Verify all core tables are present (at least as empty arrays)
+    const missingTables = BACKUP_CONFIG.tables.filter(t => !data.tables[t.name]);
+    if (missingTables.length > 0) {
+        console.warn('Backup is missing data for tables:', missingTables.map(t => t.name));
+        if (missingTables.length > 5) return 'Invalid backup: Significant portion of data tables are missing.';
     }
 
     return null;
@@ -1395,100 +1548,113 @@ async function importBackup(event) {
   const reader = new FileReader();
   reader.onload = async (e) => {
     try {
-      const data = JSON.parse(e.target.result);
+      const backupData = JSON.parse(e.target.result);
 
-      const validationError = validateBackup(data);
-      if (validationError) {
-          return UI.showNotification(validationError, 'error');
+      const validationError = validateBackup(backupData);
+      if (validationError) return UI.showNotification(validationError, 'error');
+
+      const tableList = Object.keys(backupData.tables);
+
+      if (!await UI.confirm(`Restore data from ${tableList.length} tables? Existing records with matching IDs will be OVERWRITTEN.`, 'Critical System Restore')) {
+          event.target.value = '';
+          return;
       }
 
-      const tables = data.tables || {};
-      const tableList = Object.keys(tables);
+      _isRestoring = true;
+      UI.showLoading('mgt-area', 'Initializing restoration...');
 
-      if (await UI.confirm(`Restore data from ${tableList.length} tables? This may overwrite existing records.`, 'System Restore')) {
-        _isRestoring = true;
-        UI.showLoading('mgt-area', 'Restoring system data...');
+      // 1. Pre-Restore Integrity Audit & Auto-Fix
+      let issues = BackupAuditManager.audit(backupData);
+      if (issues.length > 0) {
+          const fixableCount = issues.filter(i => i.isOptional).length;
+          const fatalCount = issues.length - fixableCount;
 
-        // 1. Dependency Validation: Ensure parent records exist for items being imported
-        const validationProblems = [];
-        const tableDataMap = tables;
+          let auditMsg = `The backup file has ${issues.length} integrity issues.`;
+          if (fixableCount > 0) auditMsg += `\n\n- ${fixableCount} optional orphans can be auto-fixed (nullified).`;
+          if (fatalCount > 0) auditMsg += `\n- ${fatalCount} fatal issues may cause database errors.`;
 
-        const checkDependency = (tableName, records, fkField, parentTableName) => {
-            const parentRecords = tableDataMap[parentTableName] || [];
-            const parentIds = new Set(parentRecords.map(p => p.id || p.email));
+          const userChoice = await UI.confirm(auditMsg + '\n\nAttempt auto-fix for optional orphans before restoring?', 'Integrity Audit');
 
-            records.forEach(r => {
-                const fkValue = r[fkField];
-                if (fkValue && !parentIds.has(fkValue)) {
-                    // Only flag if parent table IS in the backup but ID is missing
-                    if (tableDataMap[parentTableName]) {
-                        validationProblems.push(`Table "${tableName}" record (${r.id || r.email}) references missing "${parentTableName}" (${fkValue})`);
-                    }
-                }
-            });
-        };
+          if (userChoice) {
+              const fixed = BackupAuditManager.sanitizeOrphans(backupData, issues);
+              UI.showNotification(`Auto-fixed ${fixed} orphaned references.`, 'info');
+              // Re-audit after fix
+              issues = BackupAuditManager.audit(backupData);
+          }
 
-        if (tableDataMap['lessons']) checkDependency('lessons', tableDataMap['lessons'], 'topic_id', 'topics');
-        if (tableDataMap['topics']) checkDependency('topics', tableDataMap['topics'], 'course_id', 'courses');
-        if (tableDataMap['lessons']) checkDependency('lessons', tableDataMap['lessons'], 'course_id', 'courses');
-        if (tableDataMap['enrollments']) checkDependency('enrollments', tableDataMap['enrollments'], 'course_id', 'courses');
-        if (tableDataMap['submissions']) checkDependency('submissions', tableDataMap['submissions'], 'assignment_id', 'assignments');
-        if (tableDataMap['quiz_submissions']) checkDependency('quiz_submissions', tableDataMap['quiz_submissions'], 'quiz_id', 'quizzes');
-        if (tableDataMap['attendance']) checkDependency('attendance', tableDataMap['attendance'], 'live_class_id', 'live_classes');
-
-        if (validationProblems.length > 0) {
-            console.warn('Backup validation warnings:', validationProblems);
-            if (!await UI.confirm(`The backup has ${validationProblems.length} potential dependency issues (e.g. lessons referencing missing topics). Proceed anyway?`, 'Validation Warning')) {
-                throw new Error('Restore cancelled due to validation warnings.');
-            }
-        }
-
-        // 2. Perform Restore
-        // Order tables based on BACKUP_CONFIG to respect foreign keys
-        const sortedTables = BACKUP_CONFIG.tables
-            .filter(config => tableList.includes(config.name));
-
-        const batchSize = 25;
-        for (const config of sortedTables) {
-            const table = config.name;
-            const rawRecords = tables[table] || [];
-
-            // Robust sanitization using centralized SupabaseDB logic
-            const sanitizedRecords = rawRecords.map(record => SupabaseDB._sanitizePayload(record));
-
-            if (sanitizedRecords.length === 0) continue;
-
-            console.log(`Restoring table "${table}": ${sanitizedRecords.length} records...`);
-
-            for (let i = 0; i < sanitizedRecords.length; i += batchSize) {
-                const batch = sanitizedRecords.slice(i, i + batchSize);
-                try {
-                    const { error } = await supabaseClient
-                        .from(table)
-                        .upsert(batch, { onConflict: config.onConflict });
-
-                    if (error) {
-                        const firstId = batch[0].id || batch[0].email || 'unknown';
-                        console.error(`Upsert failed for table "${table}" at batch index ${i} (First ID: ${firstId}):`, error);
-                        console.error('Failed batch sample:', batch[0]);
-                        throw new Error(`[Table: ${table}] [Record ID: ${firstId}] ${error.message}`);
-                    }
-                } catch (batchErr) {
-                    throw batchErr;
-                }
-            }
-        }
-
-        UI.showNotification('System Restore completed successfully.', 'success');
-        renderManagement();
+          if (issues.some(i => !i.isOptional)) {
+              const proceed = await UI.confirm('Remaining fatal issues found. Database errors are likely. Proceed anyway?', 'Warning');
+              if (!proceed) throw new Error('Restore cancelled by user.');
+          }
       }
+
+      // 2. Perform Restore using strictly ordered tables from BACKUP_CONFIG
+      const sortedConfigs = BACKUP_CONFIG.tables.filter(config => tableList.includes(config.name));
+      const totalSteps = sortedConfigs.length;
+
+      for (let step = 0; step < totalSteps; step++) {
+          const config = sortedConfigs[step];
+          const table = config.name;
+          const records = backupData.tables[table] || [];
+
+          if (records.length === 0) continue;
+
+          UI.showLoading('mgt-area', `Restoring table [${step+1}/${totalSteps}]: ${table} (${records.length} records)...`);
+
+          // 2.1 Multi-pass logic for self-referencing tables (e.g. discussions)
+          const hasSelfDep = config.dependencies?.some(d => d.self);
+
+          const processBatch = async (batchRecords) => {
+              const batch = batchRecords.map(r => SupabaseDB._sanitizePayload(r));
+              const { error } = await supabaseClient
+                  .from(table)
+                  .upsert(batch, { onConflict: config.onConflict });
+
+              if (error) {
+                  const firstId = batch[0].id || batch[0].email || 'unknown';
+                  console.error(`Restore failed at table "${table}":`, error);
+                  throw new Error(`[Table: ${table}] [Record ID: ${firstId}] ${error.message} (Code: ${error.code})`);
+              }
+          };
+
+          const batchSize = 50;
+
+          if (hasSelfDep) {
+              console.log(`Using two-pass restore for self-referencing table: ${table}`);
+              const selfFields = config.dependencies.filter(d => d.self).map(d => d.field);
+
+              // Pass 1: Restore with self-references nullified
+              for (let i = 0; i < records.length; i += batchSize) {
+                  const batch = records.slice(i, i + batchSize).map(r => {
+                      const temp = { ...r };
+                      selfFields.forEach(f => temp[f] = null);
+                      return temp;
+                  });
+                  await processBatch(batch);
+              }
+              // Pass 2: Restore with real self-references
+              for (let i = 0; i < records.length; i += batchSize) {
+                  const batch = records.slice(i, i + batchSize);
+                  await processBatch(batch);
+              }
+          } else {
+              // Regular single pass restore
+              for (let i = 0; i < records.length; i += batchSize) {
+                  const batch = records.slice(i, i + batchSize);
+                  await processBatch(batch);
+              }
+          }
+      }
+
+      UI.showNotification('System Restore completed successfully.', 'success');
+      renderManagement();
     } catch (err) {
-      console.error('Restore error:', err);
-      UI.showNotification('Failed to restore backup: ' + err.message, 'error');
+      console.error('Restore failed:', err);
+      UI.showNotification('Restoration Failed: ' + err.message, 'error');
     } finally {
-        _isRestoring = false;
-        UI.hideLoading('mgt-area');
-        event.target.value = '';
+      _isRestoring = false;
+      UI.hideLoading('mgt-area');
+      event.target.value = '';
     }
   };
   reader.readAsText(file);

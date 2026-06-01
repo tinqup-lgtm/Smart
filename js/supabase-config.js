@@ -1172,18 +1172,10 @@ class SupabaseDB {
         _cache.invalidate('planner');
     }
 
-    // Backup helper with robust pagination support
-    static async getAllTableData(table) {
+    // Backup helper with robust pagination support and dynamic ordering
+    static async getAllTableData(table, orderBy = 'created_at') {
         return this._request(async () => {
-            // Handle tables with different timestamp column names for ordering
-            let orderCol = 'created_at';
-            if (table === 'enrollments') orderCol = 'enrolled_at';
-            else if (table === 'submissions') orderCol = 'submitted_at';
-            else if (table === 'quiz_submissions') orderCol = 'started_at';
-            else if (table === 'study_sessions') orderCol = 'started_at';
-            else if (table === 'certificates') orderCol = 'issued_at';
-            else if (table === 'user_secrets') orderCol = 'updated_at';
-
+            let orderCol = orderBy;
             let allData = [];
             let page = 0;
             const pageSize = 1000;
