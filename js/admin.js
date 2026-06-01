@@ -28,7 +28,6 @@ const BACKUP_CONFIG = {
         { name: 'violations', onConflict: 'id', orderBy: 'timestamp', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }, { table: ['assignments', 'quizzes'], field: 'assessment_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'invites', onConflict: 'token', orderBy: 'token', dependencies: [{ table: 'users', field: 'created_by' }] },
         { name: 'support_tickets', onConflict: 'id', orderBy: 'created_at', dependencies: [] },
-        { name: 'system_logs', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'users', field: 'user_email', optional: true }, { table: 'users', field: 'actor_email', optional: true }] },
         { name: 'maintenance', onConflict: 'id', orderBy: 'id', dependencies: [] }
     ]
 };

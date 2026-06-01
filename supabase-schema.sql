@@ -37,33 +37,6 @@ END;
 $$ language 'plpgsql' SECURITY DEFINER;
 
 -- Audit Logging Helper
-CREATE OR REPLACE FUNCTION log_system_event(
-    p_event_type TEXT,
-    p_user_email TEXT DEFAULT NULL,
-    p_actor_email TEXT DEFAULT NULL,
-    p_resource_id TEXT DEFAULT NULL,
-    p_resource_type TEXT DEFAULT NULL,
-    p_message TEXT DEFAULT NULL,
-    p_severity TEXT DEFAULT 'info',
-    p_metadata JSONB DEFAULT '{}'::jsonb
-) RETURNS VOID AS $$
-BEGIN
-    INSERT INTO system_logs (event_type, user_email, actor_email, resource_id, resource_type, message, severity, metadata, ip_address, user_agent)
-    VALUES (
-        p_event_type,
-        p_user_email,
-        COALESCE(p_actor_email, get_auth_email_raw()),
-        p_resource_id,
-        p_resource_type,
-        p_message,
-        p_severity,
-        p_metadata,
-        current_setting('request.headers', true)::jsonb->>'x-real-ip',
-        current_setting('request.headers', true)::jsonb->>'user-agent'
-    );
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- 1. Tables Creation (With all columns integrated)
 
 CREATE TABLE IF NOT EXISTS users (
@@ -397,21 +370,6 @@ CREATE TABLE IF NOT EXISTS support_tickets (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS system_logs (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  event_type VARCHAR(100) NOT NULL,
-  user_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
-  actor_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
-  resource_id TEXT,
-  resource_type VARCHAR(50),
-  message TEXT,
-  severity VARCHAR(20) DEFAULT 'info' CHECK (severity IN ('debug', 'info', 'warn', 'error', 'critical')),
-  metadata JSONB DEFAULT '{}'::jsonb,
-  ip_address TEXT,
-  user_agent TEXT,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
 -- 2. Migrations for existing tables (Idempotent)
 
 DO $$
@@ -677,11 +635,6 @@ BEGIN
         EXECUTE format('CREATE TRIGGER update_%I_updated_at BEFORE UPDATE ON %I FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column()', t, t);
     END LOOP;
 END $$;
-
--- system_logs RLS & cleanup
-ALTER TABLE system_logs ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Logs: Admin View" ON system_logs;
-CREATE POLICY "Logs: Admin View" ON system_logs FOR SELECT USING (is_admin());
 
 -- 4. Functional Triggers
 
@@ -1199,12 +1152,6 @@ CREATE INDEX IF NOT EXISTS idx_invites_created_by ON invites(created_by);
 CREATE INDEX IF NOT EXISTS idx_support_tickets_user_email ON support_tickets(user_email);
 CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON support_tickets(status);
 
--- System Logs Indexes
-CREATE INDEX IF NOT EXISTS idx_system_logs_user_email ON system_logs(user_email);
-CREATE INDEX IF NOT EXISTS idx_system_logs_actor_email ON system_logs(actor_email);
-CREATE INDEX IF NOT EXISTS idx_system_logs_event_type ON system_logs(event_type);
-CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs(created_at DESC);
-
 -- Notification/Broadcast Sorting Optimization
 CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_email, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_broadcasts_course_role ON broadcasts(course_id, target_role);
@@ -1368,16 +1315,12 @@ BEGIN
       IF v_user.reset_request IS NOT NULL AND
          v_user.reset_request->>'status' = 'approved' AND
          (v_user.reset_request->>'expires_at')::TIMESTAMP WITH TIME ZONE > NOW() AND
-         (v_user.reset_request->>'login_used' IS NULL OR v_user.reset_request->>'login_used' = 'false') AND
          (v_user.reset_request->>'temp_password' = p_password_hash) THEN
 
-          -- Create the missing secret (One-time gateway)
+          -- Create the missing secret (Gateway)
           INSERT INTO user_secrets (email, password_hash, session_id)
           VALUES (p_email, p_password_hash, p_session_id)
           RETURNING * INTO v_secret;
-
-          -- Mark reset request as used immediately
-          UPDATE users SET reset_request = reset_request || '{"login_used": true}'::jsonb WHERE email = p_email;
       ELSE
           IF v_user.reset_request IS NOT NULL AND v_user.reset_request->>'status' = 'approved' THEN
              DECLARE
@@ -1398,23 +1341,15 @@ BEGIN
   -- 2. Handle Existing Secrets (Regular or just-created gateway)
   IF v_secret.password_hash = p_password_hash OR (v_secret.reset_data->>'temp_password' = p_password_hash) THEN
     -- Special Check: If the primary password matches the temp password in an active reset request,
-    -- enforce one-time gateway rules.
+    -- check for expiry.
     IF v_user.reset_request IS NOT NULL AND
        v_user.reset_request->>'status' = 'approved' AND
        (v_secret.reset_data->>'temp_password' = p_password_hash OR v_user.reset_request->>'temp_password' = p_password_hash) THEN
 
-        -- Enforce expiry and one-time use
+        -- Enforce expiry
         IF (v_user.reset_request->>'expires_at')::TIMESTAMP WITH TIME ZONE < NOW() THEN
              RETURN jsonb_build_object('success', false, 'message', 'Temporary password expired');
         END IF;
-
-        IF (v_user.reset_request->>'login_used' = 'true') THEN
-             RETURN jsonb_build_object('success', false, 'message', 'Temporary password already used. Reset password to continue.');
-        END IF;
-
-        -- Mark as used for subsequent attempts and update local v_user record for accurate response
-        UPDATE users SET reset_request = reset_request || '{"login_used": true}'::jsonb WHERE email = p_email
-        RETURNING reset_request INTO v_user.reset_request;
     END IF;
 
     -- Update session and login stats
@@ -1426,8 +1361,6 @@ BEGIN
       metadata = COALESCE(metadata, '{}'::jsonb) || '{"last_invalidation_reason": "new_login"}'::jsonb
     WHERE email = p_email
     RETURNING last_login, failed_attempts, locked_until, metadata INTO v_user.last_login, v_user.failed_attempts, v_user.locked_until, v_user.metadata;
-
-    PERFORM log_system_event('LOGIN_SUCCESS', p_email, p_email, null, 'user', 'User logged in successfully.', 'info');
 
     RETURN jsonb_build_object(
       'success', true,
@@ -1461,14 +1394,10 @@ BEGIN
         -- Flag if too many lockouts
         IF v_user.lockouts + 1 >= 3 THEN
             UPDATE users SET flagged = TRUE WHERE email = p_email;
-            PERFORM log_system_event('ACCOUNT_FLAGGED', p_email, 'system', null, 'user', 'Account flagged due to excessive lockouts.', 'critical');
         END IF;
 
-        PERFORM log_system_event('ACCOUNT_LOCKED', p_email, 'system', null, 'user', 'Account locked due to failed attempts.', 'warn');
         RETURN jsonb_build_object('success', false, 'message', 'Too many failed attempts. Account locked for 30 minutes.');
     END IF;
-
-    PERFORM log_system_event('LOGIN_FAILURE', p_email, p_email, null, 'user', 'Failed login attempt.', 'warn');
 
     -- If there is an approved reset request, return the temp password separately
     IF v_user.reset_request IS NOT NULL AND v_user.reset_request->>'status' = 'approved' THEN
@@ -1599,13 +1528,15 @@ BEGIN
     ON CONFLICT (email) DO UPDATE SET
         password_hash = CASE WHEN p_password_hash IS NOT NULL THEN EXCLUDED.password_hash ELSE user_secrets.password_hash END,
         session_id = CASE WHEN p_session_id IS NOT NULL THEN EXCLUDED.session_id ELSE user_secrets.session_id END,
-        reset_data = CASE WHEN p_reset_data IS NOT NULL THEN EXCLUDED.reset_data ELSE user_secrets.reset_data END,
+        -- reset_data relocation logic: If EXCLUDED.reset_data is provided, it replaces.
+        -- To CLEAR reset_data, we must pass a specific object or have an explicit p_clear_reset flag.
+        -- For this project, if p_reset_data is provided as an EMPTY object, we consider it a clear request.
+        reset_data = CASE
+            WHEN p_reset_data IS NOT NULL THEN (CASE WHEN p_reset_data = '{}'::jsonb THEN NULL ELSE EXCLUDED.reset_data END)
+            ELSE user_secrets.reset_data
+        END,
         updated_at = NOW();
 
-    -- Audit significant changes
-    IF p_password_hash IS NOT NULL THEN
-        PERFORM log_system_event('PASSWORD_CHANGED', p_email, null, null, 'user', 'Password updated successfully.', 'info');
-    END IF;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -1718,8 +1649,6 @@ BEGIN
 
     -- Create Notification
     PERFORM notify_user(p_email, 'Reset Requested', 'Password reset requested and pending admin review.', null, 'reset_requested');
-
-    PERFORM log_system_event('PASSWORD_RESET_REQUESTED', p_email, p_email, null, 'user', 'Password reset requested.', 'info');
 
     RETURN jsonb_build_object('success', true, 'message', 'Password reset request submitted.');
 END;
@@ -1937,8 +1866,6 @@ BEGIN
     DELETE FROM broadcasts WHERE expires_at < NOW();
     DELETE FROM notifications WHERE created_at < (NOW() - INTERVAL '60 days') AND is_read = TRUE;
     DELETE FROM violations WHERE expires_at < NOW();
-    DELETE FROM system_logs WHERE created_at < (NOW() - INTERVAL '30 days') AND severity IN ('debug', 'info');
-    DELETE FROM system_logs WHERE created_at < (NOW() - INTERVAL '90 days');
 
     -- Automatically clear expired password reset requests (24h window)
     UPDATE users
