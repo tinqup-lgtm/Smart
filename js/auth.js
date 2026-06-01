@@ -384,7 +384,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         return ValidationUI.showError(errorEl, 'This account has an active password reset request pending admin review. You cannot sign up again.');
                     }
                     if (existing.reset_request.status === 'approved') {
-                        const tempPass = existing.reset_request.temp_password_plain || '[Contact Admin]';
+                        const tempPass = existing.reset_data?.temp_password_plain || '[Contact Admin]';
                         return ValidationUI.showErrorHTML(errorEl, `This account has an approved password reset. Please use the temporary password provided by your administrator to login: <br><strong style="font-family:monospace; font-size:1.1rem; letter-spacing:1px; display:block; margin-top:5px; background:rgba(0,0,0,0.05); padding:5px; border-radius:4px">${escapeHtml(tempPass)}</strong>`);
                     }
                 }
@@ -493,8 +493,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         return ValidationUI.showError(passErr, 'Temporary password expired. Please request a new reset.');
                     }
                     // Explicitly pass temp password in session for potential UI checks
-                    if (user.reset_request.temp_password_plain) {
-                         sessionStorage.setItem('lastApprovedTemp', user.reset_request.temp_password_plain);
+                    if (user.reset_data?.temp_password_plain) {
+                         sessionStorage.setItem('lastApprovedTemp', user.reset_data.temp_password_plain);
                     }
                 }
             }
@@ -523,8 +523,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Handle approved reset redirection
                 if (authUser.reset_request && authUser.reset_request.status === 'approved') {
                     // Cache the plain text temp password if available for reuse in new password screen
-                    if (authUser.reset_request.temp_password_plain) {
-                        sessionStorage.setItem('lastApprovedTemp', authUser.reset_request.temp_password_plain);
+                    if (authUser.reset_data?.temp_password_plain) {
+                        sessionStorage.setItem('lastApprovedTemp', authUser.reset_data.temp_password_plain);
                     }
                     Auth.showNewPassword();
                     return;
@@ -627,7 +627,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Prevent using the same temporary password
             const hashedNew = await window.hashPassword(newPass, freshUser.email);
             const lastTemp = sessionStorage.getItem('lastApprovedTemp');
-            if (hashedNew === freshUser.reset_request.temp_password || (lastTemp && newPass === lastTemp)) {
+            if (hashedNew === freshUser.reset_data?.temp_password || (lastTemp && newPass === lastTemp)) {
                 return ValidationUI.showError(err, 'New password cannot be the same as your temporary password.');
             }
 

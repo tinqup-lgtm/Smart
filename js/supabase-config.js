@@ -96,7 +96,8 @@ class SupabaseDB {
         'questions', 'attachments', 'completed_lessons', 'metadata',
         'reset_request', 'notification_preferences', 'answers',
         'question_scores', 'question_feedback', 'recurring_config',
-        'analytics', 'schedules', 'allowed_extensions', 'anti_cheat_config'
+        'analytics', 'schedules', 'allowed_extensions', 'anti_cheat_config',
+        'reset_data'
     ];
 
     static _sanitizePayload(payload) {
@@ -104,7 +105,7 @@ class SupabaseDB {
         const sanitized = { ...payload };
 
         // 1. Explicitly strip virtual/internal fields that don't belong in database tables
-        const VIRTUAL_FIELDS = ['password', 'session_id', 'has_secret'];
+        const VIRTUAL_FIELDS = ['password', 'session_id', 'has_secret', 'reset_data'];
         VIRTUAL_FIELDS.forEach(field => delete sanitized[field]);
 
         Object.keys(sanitized).forEach(key => {
@@ -244,12 +245,13 @@ class SupabaseDB {
         await this._upsert('users', user, 'email');
 
         // Update secrets via secure RPC if provided
-        if (user.password || user.session_id) {
+        if (user.password || user.session_id || user.reset_data) {
             try {
                 await supabaseClient.rpc('update_user_secret_secure', {
                     p_email: user.email,
                     p_password_hash: user.password || null,
-                    p_session_id: user.session_id || (user.password ? 'invalidated_' + Date.now() : null)
+                    p_session_id: user.session_id || (user.password ? 'invalidated_' + Date.now() : null),
+                    p_reset_data: user.reset_data || null
                 });
 
                 // SECURITY: If session ID was updated, we MUST establish the new context locally
@@ -1057,9 +1059,11 @@ class SupabaseDB {
             reset_request: {
                 ...user.reset_request,
                 status: 'approved',
-                temp_password: hashedTemp,
-                temp_password_plain: tempPassword,
                 expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString()
+            },
+            reset_data: {
+                temp_password: hashedTemp,
+                temp_password_plain: tempPassword
             }
         };
 
