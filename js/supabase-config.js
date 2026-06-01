@@ -92,6 +92,45 @@ const _cache = {
 
 // Supabase Database Operations
 class SupabaseDB {
+    static JSONB_COLUMNS = [
+        'questions', 'attachments', 'completed_lessons', 'metadata',
+        'reset_request', 'notification_preferences', 'answers',
+        'question_scores', 'question_feedback', 'recurring_config',
+        'analytics', 'schedules', 'allowed_extensions', 'anti_cheat_config'
+    ];
+
+    static _sanitizePayload(payload) {
+        if (!payload || typeof payload !== 'object') return payload;
+        const sanitized = { ...payload };
+        Object.keys(sanitized).forEach(key => {
+            const value = sanitized[key];
+            // 1. Remove joined objects/arrays that are NOT known JSONB/Array columns
+            if (value !== null && typeof value === 'object' && !this.JSONB_COLUMNS.includes(key)) {
+                delete sanitized[key];
+            }
+            // 2. Convert empty strings to null for better database integrity (especially FKs)
+            if (sanitized[key] === '') {
+                sanitized[key] = null;
+            }
+        });
+        return sanitized;
+    }
+
+    static async _upsert(table, payload, onConflict = 'id') {
+        const sanitized = Array.isArray(payload)
+            ? payload.map(p => this._sanitizePayload(p))
+            : this._sanitizePayload(payload);
+
+        return this._request(async () => {
+            const { data, error } = await supabaseClient
+                .from(table)
+                .upsert(sanitized, { onConflict })
+                .select();
+            if (error) throw error;
+            return data;
+        });
+    }
+
     static async _request(fn) {
         if (!supabaseClient) {
             throw new Error('Supabase client not initialized. Check your connection or CDN availability.');
@@ -197,30 +236,7 @@ class SupabaseDB {
         }
 
         // Handle User Update
-        const payload = {
-            email: user.email,
-            full_name: user.full_name,
-            phone: user.phone,
-            role: user.role,
-            last_login: user.last_login,
-            failed_attempts: user.failed_attempts,
-            locked_until: user.locked_until,
-            lockouts: user.lockouts,
-            flagged: user.flagged,
-            reset_request: user.reset_request,
-            active: user.active,
-            notification_preferences: user.notification_preferences,
-            metadata: user.metadata
-        };
-        if (user.id) payload.id = user.id;
-        if (user.created_at) payload.created_at = user.created_at;
-
-        const { data, error } = await supabaseClient
-            .from('users')
-            .update(payload)
-            .eq('email', user.email)
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('users', user, 'email');
 
         // Update secrets via secure RPC if provided
         if (user.password || user.session_id) {
@@ -434,31 +450,7 @@ class SupabaseDB {
     }
 
     static async saveAssignment(assignment) {
-        // Sanitize payload to avoid 400 error from extra fields (e.g. from joins)
-        const payload = {
-            course_id: assignment.course_id,
-            title: assignment.title,
-            description: assignment.description,
-            teacher_email: assignment.teacher_email,
-            start_at: assignment.start_at,
-            due_date: assignment.due_date,
-            points_possible: assignment.points_possible,
-            allow_late_submissions: assignment.allow_late_submissions,
-            late_penalty_per_day: assignment.late_penalty_per_day,
-            allowed_extensions: assignment.allowed_extensions,
-            questions: assignment.questions,
-            attachments: assignment.attachments,
-            status: assignment.status,
-            anti_cheat_config: assignment.anti_cheat_config
-        };
-        if (assignment.id) payload.id = assignment.id;
-        if (assignment.created_at) payload.created_at = assignment.created_at;
-
-        const { data, error } = await supabaseClient
-            .from('assignments')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('assignments', assignment);
         _cache.invalidate('assignments');
         return data?.[0];
     }
@@ -549,30 +541,7 @@ class SupabaseDB {
     }
 
     static async saveSubmission(submission) {
-        // Sanitize payload
-        const payload = {
-            assignment_id: submission.assignment_id,
-            student_email: submission.student_email,
-            submitted_at: submission.submitted_at,
-            answers: submission.answers,
-            question_scores: submission.question_scores,
-            question_feedback: submission.question_feedback,
-            late_penalty_applied: submission.late_penalty_applied,
-            attachments: submission.attachments,
-            grade: submission.grade,
-            final_grade: submission.final_grade,
-            feedback: submission.feedback,
-            regrade_request: submission.regrade_request,
-            graded_at: submission.graded_at,
-            status: submission.status
-        };
-        if (submission.id) payload.id = submission.id;
-
-        const { data, error } = await supabaseClient
-            .from('submissions')
-            .upsert(payload, { onConflict: 'assignment_id,student_email' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('submissions', submission, 'assignment_id,student_email');
         _cache.invalidate('submissions');
         return data?.[0];
     }
@@ -617,19 +586,7 @@ class SupabaseDB {
     }
 
     static async saveEnrollment(enrollment) {
-        const payload = {
-            course_id: enrollment.course_id,
-            student_email: enrollment.student_email,
-            enrolled_at: enrollment.enrolled_at,
-            progress: enrollment.progress,
-            completed: enrollment.completed,
-            completed_lessons: enrollment.completed_lessons
-        };
-        const { data, error } = await supabaseClient
-            .from('enrollments')
-            .upsert(payload, { onConflict: 'course_id,student_email' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('enrollments', enrollment, 'course_id,student_email');
         _cache.invalidate(`enrollments_${enrollment.student_email}`);
         return data?.[0];
     }
@@ -818,24 +775,7 @@ class SupabaseDB {
      * Creates or updates a course record.
      */
     static async saveCourse(course) {
-        // Sanitize payload to avoid 400 error from extra fields
-        const payload = {
-            title: course.title,
-            description: course.description,
-            teacher_email: course.teacher_email,
-            created_by: course.created_by,
-            enrollment_id: course.enrollment_id,
-            status: course.status,
-            metadata: course.metadata
-        };
-        if (course.id) payload.id = course.id;
-        if (course.created_at) payload.created_at = course.created_at;
-
-        const { data, error } = await supabaseClient
-            .from('courses')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('courses', course);
         _cache.invalidate('courses_all');
         if (course.teacher_email) _cache.invalidate(`courses_${course.teacher_email}`);
         return data?.[0];
@@ -892,19 +832,7 @@ class SupabaseDB {
     }
 
     static async saveTopic(topic) {
-        const payload = {
-            course_id: topic.course_id,
-            teacher_email: topic.teacher_email,
-            title: topic.title,
-            description: topic.description,
-            order_index: topic.order_index
-        };
-        if (topic.id) payload.id = topic.id;
-        const { data, error } = await supabaseClient
-            .from('topics')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('topics', topic);
         _cache.invalidate('lessons'); // Invalidate lessons cache as they are related to topics
         return data?.[0];
     }
@@ -932,22 +860,7 @@ class SupabaseDB {
     }
 
     static async saveLesson(lesson) {
-        const payload = {
-            course_id: lesson.course_id,
-            topic_id: lesson.topic_id,
-            title: lesson.title,
-            content: lesson.content,
-            video_url: lesson.video_url,
-            order_index: lesson.order_index
-        };
-        if (lesson.id) payload.id = lesson.id;
-        if (lesson.created_at) payload.created_at = lesson.created_at;
-
-        const { data, error } = await supabaseClient
-            .from('lessons')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('lessons', lesson);
         return data?.[0];
     }
 
@@ -976,20 +889,7 @@ class SupabaseDB {
     }
 
     static async saveMaterial(material) {
-        const payload = {
-            course_id: material.course_id,
-            teacher_email: material.teacher_email,
-            title: material.title,
-            description: material.description,
-            file_url: material.file_url,
-            file_type: material.file_type
-        };
-        if (material.id) payload.id = material.id;
-        const { data, error } = await supabaseClient
-            .from('materials')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('materials', material);
         _cache.invalidate('lessons');
         return data?.[0];
     }
@@ -1023,21 +923,7 @@ class SupabaseDB {
     }
 
     static async saveDiscussion(discussion) {
-        const payload = {
-            course_id: discussion.course_id,
-            user_email: discussion.user_email,
-            parent_id: discussion.parent_id,
-            title: discussion.title,
-            content: discussion.content
-        };
-        if (discussion.id) payload.id = discussion.id;
-        if (discussion.created_at) payload.created_at = discussion.created_at;
-
-        const { data, error } = await supabaseClient
-            .from('discussions')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('discussions', discussion);
         _cache.invalidate('materials');
         return data?.[0];
     }
@@ -1074,30 +960,7 @@ class SupabaseDB {
     }
 
     static async saveQuiz(quiz) {
-        // Sanitize payload to avoid 400 error from extra fields
-        const payload = {
-            course_id: quiz.course_id,
-            teacher_email: quiz.teacher_email,
-            title: quiz.title,
-            description: quiz.description,
-            time_limit: quiz.time_limit,
-            start_at: quiz.start_at,
-            end_at: quiz.end_at,
-            attempts_allowed: quiz.attempts_allowed,
-            passing_score: quiz.passing_score,
-            questions: quiz.questions,
-            shuffle_questions: quiz.shuffle_questions,
-            status: quiz.status,
-            anti_cheat_config: quiz.anti_cheat_config
-        };
-        if (quiz.id) payload.id = quiz.id;
-        if (quiz.created_at) payload.created_at = quiz.created_at;
-
-        const { data, error } = await supabaseClient
-            .from('quizzes')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('quizzes', quiz);
         _cache.invalidate(); // Quizzes have complex keys, simpler to clear all
         return data?.[0];
     }
@@ -1128,29 +991,12 @@ class SupabaseDB {
     }
 
     static async saveQuizSubmission(submission) {
-        // Sanitize payload to avoid 400 error from extra fields
-        const payload = {
-            quiz_id: submission.quiz_id,
-            student_email: submission.student_email,
-            attempt_number: submission.attempt_number,
-            score: submission.score,
-            total_points: submission.total_points,
-            answers: submission.answers,
-            analytics: submission.analytics,
-            status: submission.status,
-            time_spent: submission.time_spent,
-            started_at: submission.started_at,
-            submitted_at: submission.submitted_at
-        };
-        // Only include ID if it is a valid UUID/truthy
-        if (submission.id) payload.id = submission.id;
-        if (submission.created_at) payload.created_at = submission.created_at;
-
-        const { data, error } = await supabaseClient
-            .from('quiz_submissions')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        // We use 'id' as onConflict if present, otherwise fallback to the composite key.
+        // However, _upsert currently only supports one.
+        // The schema has a unique constraint on (quiz_id, student_email, attempt_number).
+        // For production robustness, if ID is missing, we must use the composite key.
+        const onConflict = submission.id ? 'id' : 'quiz_id,student_email,attempt_number';
+        const data = await this._upsert('quiz_submissions', submission, onConflict);
         return data?.[0];
     }
 
@@ -1244,22 +1090,7 @@ class SupabaseDB {
     }
 
     static async saveBroadcast(broadcast) {
-        const payload = {
-            course_id: broadcast.course_id,
-            target_role: broadcast.target_role,
-            title: broadcast.title,
-            message: broadcast.message,
-            link: broadcast.link,
-            type: broadcast.type,
-            expires_at: broadcast.expires_at,
-            created_at: broadcast.created_at || new Date().toISOString()
-        };
-        if (broadcast.id) payload.id = broadcast.id;
-        const { data, error } = await supabaseClient
-            .from('broadcasts')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('broadcasts', broadcast);
         _cache.invalidate('broadcasts_active');
         return data?.[0];
     }
@@ -1297,19 +1128,7 @@ class SupabaseDB {
 
     // Certificate operations
     static async issueCertificate(certificate) {
-        const payload = {
-            course_id: certificate.course_id,
-            student_email: certificate.student_email,
-            issued_at: certificate.issued_at,
-            certificate_url: certificate.certificate_url,
-            metadata: certificate.metadata
-        };
-        if (certificate.id) payload.id = certificate.id;
-        const { data, error } = await supabaseClient
-            .from('certificates')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('certificates', certificate);
         _cache.invalidate('certificates');
         return data?.[0];
     }
@@ -1339,21 +1158,7 @@ class SupabaseDB {
     }
 
     static async savePlannerItem(item) {
-        const payload = {
-            user_email: item.user_email,
-            title: item.title,
-            description: item.description,
-            due_date: item.due_date,
-            priority: item.priority,
-            completed: item.completed,
-            created_at: item.created_at || new Date().toISOString()
-        };
-        if (item.id) payload.id = item.id;
-        const { data, error } = await supabaseClient
-            .from('planner')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('planner', item);
         _cache.invalidate('planner');
         return data?.[0];
     }
@@ -1398,19 +1203,7 @@ class SupabaseDB {
 
     // Study session operations
     static async saveStudySession(session) {
-        const payload = {
-            user_email: session.user_email,
-            course_id: session.course_id,
-            duration: session.duration,
-            started_at: session.started_at,
-            ended_at: session.ended_at
-        };
-        if (session.id) payload.id = session.id;
-        const { data, error } = await supabaseClient
-            .from('study_sessions')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('study_sessions', session);
         _cache.invalidate('study_sessions');
         return data?.[0];
     }
@@ -1454,29 +1247,7 @@ class SupabaseDB {
     }
 
     static async saveLiveClass(liveClass) {
-        // Sanitize payload
-        const payload = {
-            course_id: liveClass.course_id,
-            teacher_email: liveClass.teacher_email,
-            title: liveClass.title,
-            description: liveClass.description,
-            start_at: liveClass.start_at,
-            end_at: liveClass.end_at,
-            room_name: liveClass.room_name,
-            meeting_url: liveClass.meeting_url,
-            recording_url: liveClass.recording_url,
-            recurring_config: liveClass.recurring_config,
-            metadata: liveClass.metadata,
-            status: liveClass.status,
-            actual_end_at: liveClass.actual_end_at
-        };
-        if (liveClass.id) payload.id = liveClass.id;
-
-        const { data, error } = await supabaseClient
-            .from('live_classes')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('live_classes', liveClass);
         _cache.invalidate('live_classes');
         return data?.[0];
     }
@@ -1498,21 +1269,7 @@ class SupabaseDB {
     }
 
     static async saveAttendance(attendance) {
-        const payload = {
-            live_class_id: attendance.live_class_id,
-            student_email: attendance.student_email,
-            join_time: attendance.join_time,
-            leave_time: attendance.leave_time,
-            duration: attendance.duration,
-            is_present: attendance.is_present,
-            created_at: attendance.created_at || new Date().toISOString()
-        };
-        if (attendance.id) payload.id = attendance.id;
-        const { data, error } = await supabaseClient
-            .from('attendance')
-            .upsert(payload, { onConflict: 'live_class_id,student_email' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('attendance', attendance, 'live_class_id,student_email');
         _cache.invalidate('attendance');
         return data?.[0];
     }
@@ -1548,41 +1305,14 @@ class SupabaseDB {
     }
 
     static async saveMaintenance(maintenance) {
-        const payload = {
-            enabled: maintenance.enabled,
-            manual_until: maintenance.manual_until,
-            message: maintenance.message,
-            schedules: maintenance.schedules
-        };
-        if (maintenance.id) payload.id = maintenance.id;
-        if (maintenance.created_at) payload.created_at = maintenance.created_at;
-
-        const { data, error } = await supabaseClient
-            .from('maintenance')
-            .upsert(payload, { onConflict: 'id' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('maintenance', maintenance);
         _cache.invalidate('maintenance');
         return data?.[0];
     }
 
     // Invite operations
     static async saveInvite(invite) {
-        const payload = {
-            token: invite.token,
-            email: invite.email,
-            role: invite.role,
-            expires_at: invite.expires_at,
-            used_at: invite.used_at,
-            created_by: invite.created_by,
-            created_at: invite.created_at || new Date().toISOString()
-        };
-        if (invite.id) payload.id = invite.id;
-        const { data, error } = await supabaseClient
-            .from('invites')
-            .upsert(payload, { onConflict: 'token' })
-            .select();
-        if (error) throw error;
+        const data = await this._upsert('invites', invite, 'token');
         _cache.invalidate('invites');
         return data?.[0];
     }
@@ -1617,36 +1347,24 @@ class SupabaseDB {
 
     // Support Ticket operations
     static async saveSupportTicket(ticket) {
-        const payload = {
-            user_email: ticket.user_email,
-            role: ticket.role,
-            subject: ticket.subject,
-            message: ticket.message,
-            status: ticket.status || 'open',
-            resolution_notes: ticket.resolution_notes || null
-        };
-
-        if (ticket.id) {
-            // Update existing ticket (Admin action)
-            const { data, error } = await supabaseClient
-                .from('support_tickets')
-                .update(payload)
-                .eq('id', ticket.id)
-                .select();
-            if (error) throw error;
-            _cache.invalidate('support_tickets');
-            return data?.[0];
-        } else {
+        if (!ticket.id) {
             // Create new ticket (Student/Teacher action)
             // Use insert instead of upsert to avoid unauthorized 401 error on SELECT/ON CONFLICT check caused by strict RLS
-            const { data, error } = await supabaseClient
-                .from('support_tickets')
-                .insert([payload])
-                .select();
-            if (error) throw error;
-            _cache.invalidate('support_tickets');
-            return data?.[0];
+            const sanitized = this._sanitizePayload(ticket);
+            return this._request(async () => {
+                const { data, error } = await supabaseClient
+                    .from('support_tickets')
+                    .insert([sanitized])
+                    .select();
+                if (error) throw error;
+                _cache.invalidate('support_tickets');
+                return data?.[0];
+            });
         }
+
+        const data = await this._upsert('support_tickets', ticket);
+        _cache.invalidate('support_tickets');
+        return data?.[0];
     }
 
 
@@ -1664,24 +1382,11 @@ class SupabaseDB {
 
     // Violation operations
     static async saveViolation(violation) {
+        const sanitized = this._sanitizePayload(violation);
         return this._request(async () => {
-            const payload = {
-                user_email: violation.user_email,
-                assessment_id: violation.assessment_id,
-                assessment_type: violation.assessment_type,
-                type: violation.type,
-                browser: violation.browser || 'Unknown',
-                device: violation.device || 'Unknown',
-                os: violation.os || 'Unknown',
-                elapsed_time: violation.elapsed_time || 0,
-                score: violation.score || 0,
-                severity: violation.severity || 'LOW',
-                metadata: violation.metadata || {},
-                timestamp: violation.timestamp || new Date().toISOString()
-            };
             const { data, error } = await supabaseClient
                 .from('violations')
-                .insert([payload])
+                .insert([sanitized])
                 .select();
             if (error) throw error;
             _cache.invalidate('violations');
