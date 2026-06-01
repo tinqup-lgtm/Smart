@@ -816,6 +816,11 @@ DECLARE
     v_due_date TIMESTAMP WITH TIME ZONE;
     v_allow_late BOOLEAN;
 BEGIN
+    -- Bypass check for admins to allow data restoration and historical record management
+    IF is_admin() THEN
+        RETURN NEW;
+    END IF;
+
     SELECT start_at, due_date, allow_late_submissions
     INTO v_start_at, v_due_date, v_allow_late
     FROM assignments
@@ -848,6 +853,11 @@ DECLARE
     v_time_limit INTEGER;
     v_is_reconciling BOOLEAN := FALSE;
 BEGIN
+    -- Bypass check for admins to allow data restoration
+    IF is_admin() THEN
+        RETURN NEW;
+    END IF;
+
     -- Detect if this update is coming from a trusted authoritative RPC via session metadata if needed,
     -- but for now we just rely on relaxing the late submission check for status transitions to 'submitted'.
     -- The authoritative scoring and timing logic is now handled in reconcile_quiz_attempts and submit_quiz_attempt.
@@ -881,6 +891,11 @@ DECLARE
     v_attempts_allowed INTEGER;
     v_next_attempt INTEGER;
 BEGIN
+    -- Bypass logic for admins during restoration, or if attempt_number is already provided
+    IF is_admin() OR NEW.attempt_number IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+
     -- Force attempt_number to NULL if it's in-progress to ensure it doesn't count towards used attempts
     IF (NEW.status = 'in-progress') THEN
         NEW.attempt_number := NULL;
@@ -1919,10 +1934,11 @@ CREATE POLICY "Submissions: Select" ON submissions FOR SELECT USING (
 );
 DROP POLICY IF EXISTS "Submissions: Insert" ON submissions;
 CREATE POLICY "Submissions: Insert" ON submissions FOR INSERT WITH CHECK (
-  student_email = get_auth_email() AND
+  is_admin() OR
+  (student_email = get_auth_email() AND
   EXISTS (SELECT 1 FROM enrollments WHERE course_id = submissions.course_id AND student_email = get_auth_email()) AND
   EXISTS (SELECT 1 FROM courses WHERE id = submissions.course_id AND status = 'published') AND
-  EXISTS (SELECT 1 FROM assignments WHERE id = submissions.assignment_id AND status = 'published')
+  EXISTS (SELECT 1 FROM assignments WHERE id = submissions.assignment_id AND status = 'published'))
 );
 DROP POLICY IF EXISTS "Submissions: Update" ON submissions;
 CREATE POLICY "Submissions: Update" ON submissions FOR UPDATE USING (
@@ -1952,9 +1968,10 @@ CREATE POLICY "Attendance: Access" ON attendance FOR SELECT USING (
 );
 DROP POLICY IF EXISTS "Attendance: Insert" ON attendance;
 CREATE POLICY "Attendance: Insert" ON attendance FOR INSERT WITH CHECK (
-  student_email = get_auth_email() AND
+  is_admin() OR
+  (student_email = get_auth_email() AND
   EXISTS (SELECT 1 FROM enrollments WHERE course_id = attendance.course_id AND student_email = get_auth_email()) AND
-  EXISTS (SELECT 1 FROM courses WHERE id = attendance.course_id AND status = 'published')
+  EXISTS (SELECT 1 FROM courses WHERE id = attendance.course_id AND status = 'published'))
 );
 
 -- 9. Quizzes Table
@@ -1978,10 +1995,11 @@ CREATE POLICY "Quiz Submissions: Access" ON quiz_submissions FOR SELECT USING (
 );
 DROP POLICY IF EXISTS "Quiz Submissions: Insert" ON quiz_submissions;
 CREATE POLICY "Quiz Submissions: Insert" ON quiz_submissions FOR INSERT WITH CHECK (
-  student_email = get_auth_email() AND
+  is_admin() OR
+  (student_email = get_auth_email() AND
   EXISTS (SELECT 1 FROM enrollments WHERE course_id = quiz_submissions.course_id AND student_email = get_auth_email()) AND
   EXISTS (SELECT 1 FROM courses WHERE id = quiz_submissions.course_id AND status = 'published') AND
-  EXISTS (SELECT 1 FROM quizzes WHERE id = quiz_submissions.quiz_id AND status = 'published')
+  EXISTS (SELECT 1 FROM quizzes WHERE id = quiz_submissions.quiz_id AND status = 'published'))
 );
 DROP POLICY IF EXISTS "Quiz Submissions: Update" ON quiz_submissions;
 CREATE POLICY "Quiz Submissions: Update" ON quiz_submissions FOR UPDATE USING (
@@ -2066,9 +2084,10 @@ CREATE POLICY "Violations: User Access" ON violations FOR SELECT USING (
 );
 DROP POLICY IF EXISTS "Violations: Insert" ON violations;
 CREATE POLICY "Violations: Insert" ON violations FOR INSERT WITH CHECK (
-  user_email = get_auth_email() AND
+  is_admin() OR
+  (user_email = get_auth_email() AND
   EXISTS (SELECT 1 FROM enrollments WHERE course_id = violations.course_id AND student_email = get_auth_email()) AND
-  EXISTS (SELECT 1 FROM courses WHERE id = violations.course_id AND status = 'published')
+  EXISTS (SELECT 1 FROM courses WHERE id = violations.course_id AND status = 'published'))
 );
 DROP POLICY IF EXISTS "Violations: Delete" ON violations;
 CREATE POLICY "Violations: Delete" ON violations FOR DELETE USING (
@@ -2086,9 +2105,10 @@ CREATE POLICY "Study Sessions: User Access" ON study_sessions FOR SELECT USING (
 );
 DROP POLICY IF EXISTS "Study Sessions: Insert" ON study_sessions;
 CREATE POLICY "Study Sessions: Insert" ON study_sessions FOR INSERT WITH CHECK (
-  user_email = get_auth_email() AND
+  is_admin() OR
+  (user_email = get_auth_email() AND
   EXISTS (SELECT 1 FROM enrollments WHERE course_id = study_sessions.course_id AND student_email = get_auth_email()) AND
-  EXISTS (SELECT 1 FROM courses WHERE id = study_sessions.course_id AND status = 'published')
+  EXISTS (SELECT 1 FROM courses WHERE id = study_sessions.course_id AND status = 'published'))
 );
 
 -- 20. Certificates Table
