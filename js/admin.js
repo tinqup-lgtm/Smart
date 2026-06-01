@@ -952,8 +952,8 @@ async function updateSidebarBadges() {
 }
 
 async function approveReset(email) {
-  // Find buttons to handle loading state and prevent race conditions
-  const row = document.querySelector(`button[onclick*="'${email}'"]`)?.closest('tr');
+  const row = document.querySelector(`button[onclick*="'${email}'"]`)?.closest('tr') ||
+              document.querySelector(`button[onclick*="approveReset('${email}')"]`)?.closest('tr');
   const buttons = row ? row.querySelectorAll('button') : [];
   const approveBtn = Array.from(buttons).find(b => b.textContent.includes('Approve'));
   const originalText = approveBtn ? approveBtn.textContent : 'Approve';
@@ -975,13 +975,14 @@ async function approveReset(email) {
             <h3>Reset Approved</h3>
             <p>Reset request approved. Temporary password:</p>
             <div class="card mb-20" style="background:var(--bg-light); font-family:monospace; font-size:1.5rem; letter-spacing:2px">
-                ${tempPassword}
+                ${escapeHtml(tempPassword)}
             </div>
             <p class="small danger-text bold">PLEASE COPY THIS NOW. IT WILL NOT BE SHOWN AGAIN.</p>
             <button class="button mt-20" onclick="this.closest('.modal-backdrop').remove()">Done</button>
         </div>
     `;
     document.body.appendChild(backdrop);
+    updateSidebarBadges();
     renderResets();
   } catch (e) {
     UI.showNotification('Error approving reset: ' + e.message, 'error');
@@ -997,7 +998,8 @@ async function denyReset(email) {
   const reason = await UI.prompt("Enter denial reason:", "Verification failed", "Deny Reset Request");
   if (reason === null) return;
 
-  const row = document.querySelector(`button[onclick*="'${email}'"]`)?.closest('tr');
+  const row = document.querySelector(`button[onclick*="'${email}'"]`)?.closest('tr') ||
+              document.querySelector(`button[onclick*="denyReset('${email}')"]`)?.closest('tr');
   const buttons = row ? row.querySelectorAll('button') : [];
   const denyBtn = Array.from(buttons).find(b => b.textContent.includes('Deny'));
   const originalText = denyBtn ? denyBtn.textContent : 'Deny';
@@ -1011,6 +1013,7 @@ async function denyReset(email) {
 
     await SupabaseDB.denyPasswordReset(email, reason);
     UI.showNotification('Reset request denied', 'info');
+    updateSidebarBadges();
     renderResets();
   } catch (e) {
     UI.showNotification('Error denying reset: ' + e.message, 'error');
