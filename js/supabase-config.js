@@ -1039,6 +1039,22 @@ class SupabaseDB {
     }
 
     /**
+     * Finalizes the password reset process by atomically updating the password
+     * and clearing the reset request state in the database.
+     */
+    static async finalizePasswordReset(email, passwordHash, sessionId) {
+        return this._request(async () => {
+            const { data, error } = await supabaseClient.rpc('finalize_password_reset_secure', {
+                p_email: email,
+                p_new_password_hash: passwordHash,
+                p_session_id: sessionId
+            });
+            if (error) throw error;
+            return data;
+        });
+    }
+
+    /**
      * Approves a pending password reset request.
      * Generates a temporary password and updates the user's secret.
      */

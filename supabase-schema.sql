@@ -1193,12 +1193,19 @@ CREATE INDEX IF NOT EXISTS idx_violations_metadata_gin ON violations USING GIN (
 -- Raw helpers that bypass reset-state blocking (Internal use only)
 CREATE OR REPLACE FUNCTION get_auth_email_raw() RETURNS VARCHAR AS $$
 DECLARE
-  v_email VARCHAR;
+  v_headers JSONB;
   v_session_id VARCHAR;
+  v_email VARCHAR;
 BEGIN
-  v_session_id := current_setting('request.headers', true)::jsonb->>'x-session-id';
-  IF v_session_id IS NOT NULL THEN
-    SELECT email INTO v_email FROM user_secrets WHERE session_id = v_session_id;
+  BEGIN
+    v_headers := current_setting('request.headers', true)::jsonb;
+    v_session_id := v_headers->>'x-session-id';
+  EXCEPTION WHEN OTHERS THEN
+    RETURN NULL;
+  END;
+
+  IF v_session_id IS NOT NULL AND v_session_id <> '' THEN
+    SELECT email INTO v_email FROM user_secrets WHERE session_id = v_session_id LIMIT 1;
     RETURN v_email;
   END IF;
   RETURN NULL;
@@ -1207,15 +1214,23 @@ $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION get_auth_role_raw() RETURNS VARCHAR AS $$
 DECLARE
-  v_role VARCHAR;
+  v_headers JSONB;
   v_session_id VARCHAR;
+  v_role VARCHAR;
 BEGIN
-  v_session_id := current_setting('request.headers', true)::jsonb->>'x-session-id';
-  IF v_session_id IS NOT NULL THEN
+  BEGIN
+    v_headers := current_setting('request.headers', true)::jsonb;
+    v_session_id := v_headers->>'x-session-id';
+  EXCEPTION WHEN OTHERS THEN
+    RETURN NULL;
+  END;
+
+  IF v_session_id IS NOT NULL AND v_session_id <> '' THEN
     SELECT u.role INTO v_role
     FROM users u
     JOIN user_secrets s ON u.email = s.email
-    WHERE s.session_id = v_session_id;
+    WHERE s.session_id = v_session_id
+    LIMIT 1;
     RETURN v_role;
   END IF;
   RETURN NULL;
@@ -1338,18 +1353,24 @@ BEGIN
       END IF;
   END IF;
 
-  -- 2. Handle Existing Secrets (Regular or just-created gateway)
+  -- 2. Handle Existing Secrets (Regular, updated, or just-created gateway)
   IF v_secret.password_hash = p_password_hash OR (v_secret.reset_data->>'temp_password' = p_password_hash) THEN
-    -- Special Check: If the primary password matches the temp password in an active reset request,
-    -- check for expiry.
+    -- Special Check: If the password matches the temp password in an active reset request,
+    -- or if it matches the main password_hash while a reset is STILL active (meaning it was just updated but not finalized),
+    -- check for expiry if it's the temp password.
     IF v_user.reset_request IS NOT NULL AND
-       v_user.reset_request->>'status' = 'approved' AND
-       (v_secret.reset_data->>'temp_password' = p_password_hash OR v_user.reset_request->>'temp_password' = p_password_hash) THEN
+       v_user.reset_request->>'status' = 'approved' THEN
 
-        -- Enforce expiry
-        IF (v_user.reset_request->>'expires_at')::TIMESTAMP WITH TIME ZONE < NOW() THEN
-             RETURN jsonb_build_object('success', false, 'message', 'Temporary password expired');
+        -- If they are using the temp password, enforce expiry
+        IF (v_secret.reset_data->>'temp_password' = p_password_hash OR v_user.reset_request->>'temp_password' = p_password_hash) THEN
+            IF (v_user.reset_request->>'expires_at')::TIMESTAMP WITH TIME ZONE < NOW() THEN
+                 RETURN jsonb_build_object('success', false, 'message', 'Temporary password expired');
+            END IF;
         END IF;
+
+        -- If they are using the main password_hash but the reset_request is still there,
+        -- it means they successfully updated it but haven't called finalize yet (or it failed).
+        -- We allow this "transitional" authentication to facilitate the finalization flow.
     END IF;
 
     -- Update session and login stats
@@ -1500,6 +1521,51 @@ BEGIN
             WHERE u.email = p_email
         ) t
     ));
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Secure Password Reset Finalization RPC
+CREATE OR REPLACE FUNCTION finalize_password_reset_secure(
+    p_email VARCHAR,
+    p_new_password_hash VARCHAR,
+    p_session_id VARCHAR
+) RETURNS JSONB AS $$
+DECLARE
+    v_user RECORD;
+BEGIN
+    -- 1. Validate User
+    SELECT * INTO v_user FROM users WHERE email = p_email;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'message', 'Account not found');
+    END IF;
+
+    -- 2. Verify Reset Status
+    IF v_user.reset_request IS NULL OR v_user.reset_request->>'status' IS DISTINCT FROM 'approved' THEN
+        RETURN jsonb_build_object('success', false, 'message', 'No approved password reset found for this account.');
+    END IF;
+
+    -- 3. Update User Table: Clear reset_request and set session
+    UPDATE users SET
+        reset_request = NULL,
+        last_login = NOW(),
+        failed_attempts = 0,
+        locked_until = NULL,
+        metadata = COALESCE(metadata, '{}'::jsonb) || '{"last_invalidation_reason": "password_change_finalized"}'::jsonb
+    WHERE email = p_email;
+
+    -- 4. Update/Create Secret: Set new password and clear reset_data
+    INSERT INTO user_secrets (email, password_hash, session_id, reset_data)
+    VALUES (p_email, p_new_password_hash, p_session_id, NULL)
+    ON CONFLICT (email) DO UPDATE SET
+        password_hash = EXCLUDED.password_hash,
+        session_id = EXCLUDED.session_id,
+        reset_data = NULL,
+        updated_at = NOW();
+
+    -- 5. Create Success Notification
+    PERFORM notify_user(p_email, 'Password Updated', 'Your password has been successfully reset and finalized.', null, 'password_updated');
+
+    RETURN jsonb_build_object('success', true, 'message', 'Password successfully reset. Please login with your new credentials.');
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
