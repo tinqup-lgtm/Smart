@@ -137,6 +137,26 @@ class SupabaseDB {
         });
     }
 
+    /**
+     * Performs a standard UPDATE operation with filters.
+     * Use this instead of _upsert when INSERT permissions are not granted (RLS).
+     */
+    static async _update(table, payload, filters) {
+        const sanitized = this._sanitizePayload(payload);
+
+        return this._request(async () => {
+            let query = supabaseClient.from(table).update(sanitized);
+            if (filters) {
+                Object.keys(filters).forEach(key => {
+                    query = query.eq(key, filters[key]);
+                });
+            }
+            const { data, error } = await query.select();
+            if (error) throw error;
+            return data;
+        });
+    }
+
     static async _request(fn) {
         if (!supabaseClient) {
             throw new Error('Supabase client not initialized. Check your connection or CDN availability.');
@@ -242,7 +262,9 @@ class SupabaseDB {
         }
 
         // Handle User Update
-        await this._upsert('users', user, 'email');
+        // We use _update instead of _upsert here because regular users do not have INSERT
+        // permissions on the users table (enforced by RLS), and upsert requires it.
+        await this._update('users', user, { email: user.email });
 
         // Update secrets via secure RPC if provided
         if (user.password || user.session_id || user.reset_data) {
