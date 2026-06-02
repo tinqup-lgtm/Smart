@@ -2235,9 +2235,10 @@ const SettingsManager = {
 
             // Verify current password via authentication attempt (re-auth)
             const hashedCurr = await window.hashPassword(curr, user.email);
-            // We use authenticate_user which will also check for locks/flagged etc
-            // Generating a dummy session ID for re-auth check
-            const authCheck = await SupabaseDB.authenticateUser(user.email, hashedCurr, 'reauth_' + Date.now());
+            // We use authenticate_user which will also check for locks/flagged etc.
+            // We use the current session ID to maintain authorization during this check.
+            const currentSid = SessionManager.getSessionId();
+            const authCheck = await SupabaseDB.authenticateUser(user.email, hashedCurr, currentSid);
 
             if (!authCheck.success) {
                 throw new Error('Current password incorrect.');
@@ -2247,9 +2248,11 @@ const SettingsManager = {
             const hashedNew = await window.hashPassword(n1, user.email);
             fresh.password = hashedNew;
 
-            // Generate fresh session to invalidate other sessions (Security Best Practice)
-            const sid = SessionManager.getSessionId(true);
-            fresh.session_id = sid;
+            // Generate fresh session ID string to invalidate other sessions (Security Best Practice).
+            // We do NOT use SessionManager.getSessionId(true) here because it immediately
+            // updates sessionStorage, which would cause RLS failure in the following saveUser call.
+            const newSid = 's_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+            fresh.session_id = newSid;
             fresh.metadata = { ...(fresh.metadata || {}), last_invalidation_reason: 'password_change' };
 
             // Our refactored saveUser now automatically handles window.setSupabaseSession(sid).
