@@ -1,9 +1,3 @@
-/**
- * Utility fallbacks to ensure runtime safety if core.js is not loaded.
- */
-const escapeHtml = window.escapeHtml || ((s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
-const escapeAttr = window.escapeAttr || ((s) => String(s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
-
 const BACKUP_CONFIG = {
     version: '1.2.0',
     tables: [
@@ -162,12 +156,16 @@ let allUsers = [];
 let allTickets = [];
 let filteredUsers = [];
 
-async function renderCourses() {
+let _coursePage = 1;
+async function renderCourses(page = 1) {
+  _coursePage = page;
   const content = document.getElementById('pageContent');
   if (!content) return;
 
+  const pageSize = 20;
+
   try {
-    const { data: courses, total } = await SupabaseDB.getCourses();
+    const { data: courses, total } = await SupabaseDB.getCourses(null, null, { page, pageSize });
 
     content.innerHTML = `
     <section>
@@ -176,6 +174,7 @@ async function renderCourses() {
         <div class="small text-muted">${total} Total Courses</div>
       </div>
       <div id="coursesTable"></div>
+      <div id="coursesPagination"></div>
     </section>
     `;
 
@@ -202,6 +201,9 @@ async function renderCourses() {
             </tr>
         `;
     });
+
+    UI.renderPagination('coursesPagination', total, page, pageSize, (newPage) => renderCourses(newPage));
+
   } catch (error) {
     console.error('Courses error:', error);
     content.innerHTML = `<div class="card danger-border"><h3>Error Loading Courses</h3><p class="small">${escapeHtml(error.message)}</p></div>`;
@@ -278,12 +280,14 @@ window.deleteCourse = deleteCourse;
 window.showChangeOwnerModal = showChangeOwnerModal;
 
 let _userSearchTimer = null;
-async function renderUsers(isImmediate = false) {
+let _userPage = 1;
+async function renderUsers(isImmediate = false, page = 1) {
   if (!isImmediate) {
       clearTimeout(_userSearchTimer);
-      _userSearchTimer = setTimeout(() => renderUsers(true), 300);
+      _userSearchTimer = setTimeout(() => renderUsers(true, page), 300);
       return;
   }
+  _userPage = page;
 
   const content = document.getElementById('pageContent');
   if (!content) return;
@@ -291,6 +295,7 @@ async function renderUsers(isImmediate = false) {
   const searchTerm = document.getElementById('userSearch')?.value || '';
   const roleFilter = document.getElementById('roleFilter')?.value || 'all';
   const statusFilter = document.getElementById('statusFilter')?.value || 'all';
+  const pageSize = 24;
 
   // If the shell isn't already rendered, build it first
   if (!document.getElementById('usersList')) {
@@ -319,28 +324,23 @@ async function renderUsers(isImmediate = false) {
       </div>
       
       <div id="usersList" class="grid"></div>
+      <div id="usersPagination"></div>
     </section>
     `;
   }
 
   try {
-    const { data: users } = await SupabaseDB.getUsers({
+    const { data: users, total } = await SupabaseDB.getUsers({
         searchTerm,
-        role: roleFilter === 'all' ? null : roleFilter
+        role: roleFilter === 'all' ? null : roleFilter,
+        status: statusFilter === 'all' ? null : statusFilter,
+        page,
+        pageSize
     });
 
-    allUsers = users;
+    allUsers = users; // This only holds the current page now
 
-    // Client-side status filtering
-    const filtered = users.filter(u => {
-        if (statusFilter === 'active') return u.active;
-        if (statusFilter === 'inactive') return !u.active;
-        if (statusFilter === 'flagged') return u.flagged;
-        if (statusFilter === 'locked') return isAccountLocked(u);
-        return true;
-    });
-
-    displayUsers(filtered);
+    displayUsers(users, total, page, pageSize);
   } catch (error) {
     console.error('Users error:', error);
     const list = document.getElementById('usersList');
@@ -356,12 +356,13 @@ async function renderUsers(isImmediate = false) {
 }
 
 
-function displayUsers(users) {
+function displayUsers(users, total, page, pageSize) {
   const list = document.getElementById('usersList');
   if (!list) return;
   
   if (users.length === 0) {
       list.innerHTML = '<div class="empty">No users found matching your criteria.</div>';
+      document.getElementById('usersPagination').innerHTML = '';
       return;
   }
 
@@ -383,12 +384,18 @@ function displayUsers(users) {
           <div class="flex gap-10">${statusBadges.join('')}</div>
         </div>
         <div class="user-meta small" style="margin-bottom:15px">
-          <div>Phone: ${escapeHtml(user.phone || 'N/A')} | 
-          Password: <span id="pw-${escapeAttr(user.id || user.email)}">[ENCRYPTED]</span>
+          <div class="grid-2 gap-5">
+            <div>Phone: ${escapeHtml(user.phone || 'N/A')}</div>
+            <div>Failed Attempts: ${escapeHtml(user.failed_attempts || 0)}</div>
           </div>
-          <div style="margin-top:4px">Failed Attempts: ${escapeHtml(user.failed_attempts || 0)} |
-          Lockouts: ${escapeHtml(user.lockouts || 0)} |
-          Joined: ${escapeHtml(user.created_at ? new Date(user.created_at).toISOString().split('T')[0] : 'N/A')}</div>
+          <div class="grid-2 gap-5 mt-5">
+            <div>Joined: ${escapeHtml(user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A')}</div>
+            <div>Last Login: ${escapeHtml(user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never')}</div>
+          </div>
+          <div class="mt-5 text-muted tiny">
+            ID: <code class="tiny">${escapeHtml(user.id)}</code> |
+            Secrets: <span class="badge ${user.has_secret ? 'badge-active' : 'badge-warn'} tiny">${user.has_secret ? 'ESTABLISHED' : 'NONE'}</span>
+          </div>
         </div>
         <div class="action-row flex" style="flex-wrap:wrap; gap:8px">
           <button class="button" style="width:auto; padding:6px 12px; font-size:12px" onclick="editUser('${escapeAttr(user.email)}')">Edit</button>
@@ -406,6 +413,8 @@ function displayUsers(users) {
       </div>
     `;
   }).join('');
+
+  UI.renderPagination('usersPagination', total, page, pageSize, (newPage) => renderUsers(true, newPage));
 }
 
 // Ensure all handlers are global
@@ -415,7 +424,9 @@ window.renderInvites = renderInvites;
 window.renderBroadcasts = renderBroadcasts;
 window.renderUsers = renderUsers;
 window.renderResets = renderResets;
+window.renderViolations = renderViolations;
 window.renderAnalytics = renderAnalytics;
+window.renderReports = renderReports;
 window.renderMaintenance = renderMaintenance;
 window.renderHealth = renderHealth;
 window.renderManagement = renderManagement;
@@ -585,12 +596,16 @@ function exportUsersCSV() {
 }
 
 async function broadcastNotif() {
-  const title = document.getElementById('bcTitle').value;
+  const title = document.getElementById('bcTitle').value.trim();
   const role = document.getElementById('bcRole').value;
-  const msg = document.getElementById('bcMsg').value;
+  const msg = document.getElementById('bcMsg').value.trim();
   const expiryDays = parseInt(document.getElementById('bcExpiry').value) || 30;
 
-  if (!title || !msg) return UI.showNotification('Title and message required', 'warn');
+  const vTitle = Validator.required(title, 'Title');
+  if (!vTitle.valid) return UI.showNotification(vTitle.message, 'warn');
+
+  const vMsg = Validator.required(msg, 'Message');
+  if (!vMsg.valid) return UI.showNotification(vMsg.message, 'warn');
 
   try {
     const expiryDate = new Date();
@@ -626,12 +641,16 @@ async function removeSchedule(idx) {
 }
 
 
-async function renderSupportTickets() {
+let _ticketPage = 1;
+async function renderSupportTickets(page = 1) {
+  _ticketPage = page;
   const content = document.getElementById('pageContent');
   if (!content) return;
 
+  const pageSize = 15;
+
   try {
-    const { data: tickets, total } = await SupabaseDB.getSupportTickets();
+    const { data: tickets, total } = await SupabaseDB.getSupportTickets(null, { page, pageSize });
     allTickets = tickets;
 
     content.innerHTML = `
@@ -641,6 +660,7 @@ async function renderSupportTickets() {
         <div class="small text-muted">${total} Tickets</div>
       </div>
       <div id="ticketsTable"></div>
+      <div id="ticketsPagination"></div>
     </section>
     `;
 
@@ -672,6 +692,8 @@ async function renderSupportTickets() {
             </tr>
         `;
     });
+
+    UI.renderPagination('ticketsPagination', total, page, pageSize, (newPage) => renderSupportTickets(newPage));
 
   } catch (error) {
     console.error('Tickets error:', error);
@@ -875,6 +897,77 @@ async function deleteBroadcast(id) {
 }
 window.deleteBroadcast = deleteBroadcast;
 
+let _violationPage = 1;
+async function renderViolations(page = 1) {
+  _violationPage = page;
+  const content = document.getElementById('pageContent');
+  if (!content) return;
+
+  const pageSize = 20;
+  const severity = document.getElementById('violSevFilter')?.value || null;
+  const type = document.getElementById('violTypeFilter')?.value || null;
+
+  if (!document.getElementById('violationsTable')) {
+    content.innerHTML = `
+    <section>
+      <div class="flex-between mb-20">
+        <h3 class="m-0">Global Security Violations</h3>
+        <div class="flex gap-10">
+          <select id="violSevFilter" class="small m-0" onchange="renderViolations(1)">
+            <option value="">All Severities</option>
+            <option value="CRITICAL" ${severity === 'CRITICAL' ? 'selected' : ''}>Critical</option>
+            <option value="HIGH" ${severity === 'HIGH' ? 'selected' : ''}>High</option>
+            <option value="LOW" ${severity === 'LOW' ? 'selected' : ''}>Low</option>
+          </select>
+          <select id="violTypeFilter" class="small m-0" onchange="renderViolations(1)">
+            <option value="">All Types</option>
+            <option value="assignment" ${type === 'assignment' ? 'selected' : ''}>Assignments</option>
+            <option value="quiz" ${type === 'quiz' ? 'selected' : ''}>Quizzes</option>
+          </select>
+        </div>
+      </div>
+      <div id="violationsTable"></div>
+      <div id="violationsPagination"></div>
+    </section>
+    `;
+  }
+
+  try {
+    const { data: violations, total } = await SupabaseDB.getViolations(null, null, null, {
+      severity: severity === '' ? null : severity,
+      assessmentType: type === '' ? null : type,
+      page,
+      pageSize
+    });
+
+    UI.renderTable('violationsTable', ['Time', 'User', 'Assessment', 'Type', 'Severity', 'Score'], violations, (v) => {
+        let sevClass = 'badge-active';
+        if (v.severity === 'CRITICAL') sevClass = 'badge-inactive';
+        else if (v.severity === 'HIGH') sevClass = 'badge-warn';
+
+        return `
+            <tr>
+              <td><div class="tiny">${new Date(v.timestamp).toLocaleString()}</div></td>
+              <td><div class="small bold">${escapeHtml(v.user_email)}</div></td>
+              <td>
+                <div class="small">${escapeHtml(v.assessment_type.toUpperCase())}</div>
+                <div class="tiny text-muted">${escapeHtml(v.assessment_id)}</div>
+              </td>
+              <td><div class="small">${escapeHtml(v.type.replace(/_/g, ' '))}</div></td>
+              <td><span class="badge ${sevClass}">${v.severity}</span></td>
+              <td><div class="bold">${v.score || 0}</div></td>
+            </tr>
+        `;
+    });
+
+    UI.renderPagination('violationsPagination', total, page, pageSize, (newPage) => renderViolations(newPage));
+
+  } catch (error) {
+    console.error('Violations error:', error);
+    content.innerHTML = `<div class="card danger-border"><h3>Error Loading Violations</h3><p class="small">${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
 async function renderResets() {
   const content = document.getElementById('pageContent');
   if (!content) return;
@@ -1025,27 +1118,123 @@ async function denyReset(email) {
   }
 }
 
+async function renderReports(tab = 'submissions', page = 1) {
+    const content = document.getElementById('pageContent');
+    if (!content) return;
+
+    const pageSize = 20;
+
+    content.innerHTML = `
+    <section>
+        <div class="flex-between mb-20">
+            <h3 class="m-0">Global Academic Reports</h3>
+        </div>
+
+        <div class="tabs mb-20">
+            <button class="tab-btn ${tab === 'submissions' ? 'active' : ''}" onclick="renderReports('submissions', 1)">Submissions</button>
+            <button class="tab-btn ${tab === 'quiz_submissions' ? 'active' : ''}" onclick="renderReports('quiz_submissions', 1)">Quiz Attempts</button>
+            <button class="tab-btn ${tab === 'attendance' ? 'active' : ''}" onclick="renderReports('attendance', 1)">Attendance</button>
+            <button class="tab-btn ${tab === 'certificates' ? 'active' : ''}" onclick="renderReports('certificates', 1)">Certificates</button>
+            <button class="tab-btn ${tab === 'study_sessions' ? 'active' : ''}" onclick="renderReports('study_sessions', 1)">Study Sessions</button>
+        </div>
+
+        <div id="reportsTable"></div>
+        <div id="reportsPagination"></div>
+    </section>
+    `;
+
+    try {
+        let res;
+        if (tab === 'submissions') {
+            res = await SupabaseDB.getSubmissions(null, null, null, { page, pageSize });
+            UI.renderTable('reportsTable', ['User', 'Assignment', 'Status', 'Grade', 'Submitted'], res.data, (s) => `
+                <tr>
+                    <td><div class="small bold">${escapeHtml(s.student_email)}</div></td>
+                    <td><div class="small">${escapeHtml(s.assignments?.title || 'Unknown')}</div></td>
+                    <td><span class="badge badge-${s.status === 'graded' ? 'active' : 'warn'}">${s.status.toUpperCase()}</span></td>
+                    <td>${s.final_grade !== null ? s.final_grade + '%' : '-'}</td>
+                    <td><div class="tiny">${new Date(s.submitted_at).toLocaleString()}</div></td>
+                </tr>
+            `);
+        } else if (tab === 'quiz_submissions') {
+            res = await SupabaseDB.getQuizSubmissions(null, null, null, { page, pageSize });
+            UI.renderTable('reportsTable', ['User', 'Quiz', 'Attempt', 'Score', 'Status', 'Started'], res.data, (s) => `
+                <tr>
+                    <td><div class="small bold">${escapeHtml(s.student_email)}</div></td>
+                    <td><div class="small">${escapeHtml(s.quizzes?.title || 'Unknown')}</div></td>
+                    <td>${s.attempt_number || '-'}</td>
+                    <td>${s.score !== null ? s.score + '%' : '-'}</td>
+                    <td><span class="badge badge-${s.status === 'submitted' ? 'active' : 'warn'}">${s.status.toUpperCase()}</span></td>
+                    <td><div class="tiny">${new Date(s.started_at).toLocaleString()}</div></td>
+                </tr>
+            `);
+        } else if (tab === 'attendance') {
+            res = await SupabaseDB.getAttendance(null, null, { page, pageSize });
+            UI.renderTable('reportsTable', ['User', 'Course', 'Live Class', 'Join Time', 'Duration'], res.data, (a) => `
+                <tr>
+                    <td><div class="small bold">${escapeHtml(a.student_email)}</div></td>
+                    <td><div class="small">${escapeHtml(a.courses?.title || 'Unknown')}</div></td>
+                    <td><div class="small">${escapeHtml(a.live_classes?.title || 'Unknown')}</div></td>
+                    <td><div class="tiny">${new Date(a.join_time).toLocaleString()}</div></td>
+                    <td>${Math.round((a.duration || 0) / 60)}m</td>
+                </tr>
+            `);
+        } else if (tab === 'certificates') {
+            res = await SupabaseDB.getCertificates(null, { page, pageSize });
+            UI.renderTable('reportsTable', ['User', 'Course', 'Issued At', 'Action'], res.data, (c) => `
+                <tr>
+                    <td><div class="small bold">${escapeHtml(c.student_email)}</div></td>
+                    <td><div class="small">${escapeHtml(c.courses?.title || 'Unknown')}</div></td>
+                    <td><div class="tiny">${new Date(c.issued_at).toLocaleString()}</div></td>
+                    <td><button class="button secondary tiny w-auto" onclick="UI.viewFile('${escapeAttr(c.certificate_url)}', 'Certificate')">View</button></td>
+                </tr>
+            `);
+        } else if (tab === 'study_sessions') {
+            res = await SupabaseDB.getStudySessions(null, { page, pageSize });
+            UI.renderTable('reportsTable', ['User', 'Duration', 'Started', 'Ended'], res.data, (s) => `
+                <tr>
+                    <td><div class="small bold">${escapeHtml(s.user_email)}</div></td>
+                    <td>${Math.round(s.duration / 60)}m</td>
+                    <td><div class="tiny">${new Date(s.started_at).toLocaleString()}</div></td>
+                    <td><div class="tiny">${new Date(s.ended_at).toLocaleString()}</div></td>
+                </tr>
+            `);
+        }
+
+        UI.renderPagination('reportsPagination', res.total, page, pageSize, (newPage) => renderReports(tab, newPage));
+
+    } catch (e) {
+        console.error('Reports error:', e);
+        document.getElementById('reportsTable').innerHTML = `<div class="card danger-border"><p class="small">${escapeHtml(e.message)}</p></div>`;
+    }
+}
+
 async function renderAnalytics() {
 
   const content = document.getElementById('pageContent');
   if (!content) return;
 
   try {
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+
     const [
         totalSubs,
         activeUsers,
         totalCourses,
         totalEnrollments,
         totalViolations,
-        { data: recentSubs }
+        recentSubsRes
     ] = await Promise.all([
       SupabaseDB.getCount('submissions'),
       SupabaseDB.getCount('users', q => q.eq('active', true)),
       SupabaseDB.getCount('courses'),
       SupabaseDB.getCount('enrollments'),
       SupabaseDB.getCount('violations'),
-      SupabaseDB.getSubmissions(null, null, null)
+      supabaseClient.from('submissions').select('submitted_at').gte('submitted_at', thirtyDaysAgo.toISOString())
     ]);
+
+    const recentSubs = recentSubsRes.data || [];
 
     const submissionsByDate = {};
     recentSubs.forEach(s => {
@@ -1067,7 +1256,7 @@ async function renderAnalytics() {
         <div class="stat-card" style="border-left-color:var(--danger)"><h4>Total Violations</h4><div class="value">${escapeHtml(totalViolations)}</div></div>
       </div>
       <div class="card" style="margin-top:20px">
-        <h4>Submission Activity</h4>
+        <h4>Submission Activity (Last 30 Days)</h4>
         <div style="height:300px; margin-top:20px">
           <canvas id="analyticsChart"></canvas>
         </div>
@@ -1177,7 +1366,14 @@ async function renderMaintenance() {
     try {
         maintenance.enabled = document.getElementById('maintenanceEnabled').checked;
         maintenance.manual_until = document.getElementById('manualUntil').value ? new Date(document.getElementById('manualUntil').value).toISOString() : null;
-        maintenance.message = document.getElementById('maintenanceMessage').value;
+        maintenance.message = document.getElementById('maintenanceMessage').value.trim();
+
+        const vMsg = Validator.required(maintenance.message, 'Maintenance Message');
+        if (!vMsg.valid) {
+            UI.showNotification(vMsg.message, 'warn');
+            return;
+        }
+
         if (await SupabaseDB.saveMaintenance(maintenance)) {
             UI.showNotification('Maintenance settings updated', 'success');
             renderMaintenance();
@@ -1233,18 +1429,18 @@ async function renderHealth() {
     const dbLatency = apiStats.lastRequestTime;
 
     const totalRecords = totalUsers + totalAssignments + totalSubmissions + totalCourses + totalQuizzes;
-    const estStorageUsage = (totalRecords * 0.5 / 1024).toFixed(2);
+    const dbSizeMb = (totalRecords * 0.1 / 1024).toFixed(2); // Reduced multiplier for better estimation of small records
 
-    const isOnline = apiStats.failedRequests < apiStats.totalRequests || apiStats.totalRequests === 0;
+    const isOnline = apiStats.successRate > 50 || apiStats.totalRequests === 0;
 
     content.innerHTML = `
       <section>
         <h3>System Health & Performance</h3>
         <div class="stats-grid">
-          <div class="stat-card"><h4>DB Response</h4><div class="value">${escapeHtml(dbLatency)}ms</div></div>
-          <div class="stat-card"><h4>Service Status</h4><div class="value ${isOnline ? 'success-text' : 'danger-text'}">${isOnline ? 'ONLINE' : 'DEGRADED'}</div></div>
-          <div class="stat-card"><h4>Est. Storage</h4><div class="value">${escapeHtml(estStorageUsage)}MB</div></div>
-          <div class="stat-card"><h4>API Success</h4><div class="value" style="color:${apiStats.successRate > 95 ? 'var(--ok)' : 'var(--danger)'}">${escapeHtml(apiStats.successRate)}%</div></div>
+          <div class="stat-card"><h4>DB Latency</h4><div class="value">${escapeHtml(dbLatency)}ms</div></div>
+          <div class="stat-card"><h4>Service Status</h4><div class="value ${isOnline ? 'success-text' : 'danger-text'}">${isOnline ? 'OPERATIONAL' : 'DEGRADED'}</div></div>
+          <div class="stat-card"><h4>DB Size (Est)</h4><div class="value">${escapeHtml(dbSizeMb)}MB</div></div>
+          <div class="stat-card"><h4>API Health</h4><div class="value" style="color:${apiStats.successRate > 95 ? 'var(--ok)' : 'var(--danger)'}">${escapeHtml(apiStats.successRate)}%</div></div>
         </div>
 
         <div class="grid-2 mt-20">
@@ -1287,7 +1483,10 @@ async function renderManagement() {
           <div class="card">
             <h4>Database Cleanup</h4>
             <p class="small">Remove old logs, drafts, and unused records.</p>
-            <button class="button" style="width:auto; margin-top:10px" onclick="previewCleanup()">Preview Cleanup</button>
+            <div class="flex gap-10 mt-10">
+                <button class="button small" onclick="previewCleanup()">Preview Cleanup</button>
+                <button class="button danger small" onclick="executePurge()">Execute Purge</button>
+            </div>
           </div>
           <div class="card">
             <h4>System Backup</h4>
@@ -1347,16 +1546,16 @@ async function previewCleanup() {
 }
 
 async function executeCleanup() {
-  if (!await UI.confirm('Are you sure? This action is irreversible.', 'Execute Cleanup')) return;
+  if (!await UI.confirm('Are you sure? This action is irreversible. It will delete all inactive users and draft courses.', 'Execute Cleanup')) return;
   try {
     UI.showLoading('mgt-area', 'Performing cleanup...');
 
     const [{ data: users }, { data: courses }] = await Promise.all([
-        SupabaseDB.getUsers(),
-        SupabaseDB.getCourses(null, 'draft')
+        SupabaseDB.getUsers({ page: 1, pageSize: 1000, status: 'inactive' }),
+        SupabaseDB.getCourses(null, 'draft', { page: 1, pageSize: 1000 })
     ]);
 
-    const inactiveUsers = (users || []).filter(u => !u.active);
+    const inactiveUsers = users || [];
     const draftCourses = courses || [];
 
     const userProms = inactiveUsers.map(u => SupabaseDB.deleteUser(u.email));
@@ -1371,6 +1570,30 @@ async function executeCleanup() {
     UI.hideLoading('mgt-area');
     renderManagement();
   }
+}
+
+async function executePurge() {
+    if (!await UI.confirm('This will permanently delete all EXPIRED broadcasts, notifications, and security violations. Proceed?', 'System Purge')) return;
+
+    UI.showLoading('mgt-area', 'Purging expired records...');
+    try {
+        const now = new Date().toISOString();
+        const results = await Promise.all([
+            supabaseClient.from('broadcasts').delete().lt('expires_at', now),
+            supabaseClient.from('notifications').delete().lt('expires_at', now),
+            supabaseClient.from('violations').delete().lt('expires_at', now)
+        ]);
+
+        const errors = results.filter(r => r.error);
+        if (errors.length > 0) throw new Error(errors[0].error.message);
+
+        UI.showNotification('System purge completed successfully.', 'success');
+    } catch (e) {
+        UI.showNotification('Purge failed: ' + e.message, 'error');
+    } finally {
+        UI.hideLoading('mgt-area');
+        renderManagement();
+    }
 }
 
 /**
@@ -2070,10 +2293,12 @@ function initNav() {
         if(page === 'dashboard') renderDashboard();
         else if(page === 'users') renderUsers();
         else if(page === 'courses') renderCourses();
+        else if(page === 'reports') renderReports();
         else if(page === 'support') renderSupportTickets();
         else if(page === 'invites') renderInvites();
         else if(page === 'broadcasts') renderBroadcasts();
         else if(page === 'resets') renderResets();
+        else if(page === 'violations') renderViolations();
         else if(page === 'analytics') renderAnalytics();
         else if(page === 'maintenance') renderMaintenance();
         else if(page === 'health') renderHealth();

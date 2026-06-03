@@ -473,6 +473,29 @@ const UI = {
         }
     },
 
+    renderPagination(containerId, total, page, pageSize, onPageChange) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        const totalPages = Math.ceil(total / pageSize);
+        if (totalPages <= 1) {
+            container.innerHTML = '';
+            return;
+        }
+
+        let html = `
+            <div class="flex-center gap-10 mt-20 pagination-container">
+                <button class="button secondary small w-auto" ${page <= 1 ? 'disabled' : ''} id="prevPage-${containerId}">← Prev</button>
+                <span class="small bold">Page ${page} of ${totalPages}</span>
+                <button class="button secondary small w-auto" ${page >= totalPages ? 'disabled' : ''} id="nextPage-${containerId}">Next →</button>
+            </div>
+        `;
+        container.innerHTML = html;
+
+        document.getElementById(`prevPage-${containerId}`).onclick = () => onPageChange(page - 1);
+        document.getElementById(`nextPage-${containerId}`).onclick = () => onPageChange(page + 1);
+    },
+
     viewFile(url, title) {
         const backdrop = document.createElement('div');
         backdrop.className = 'modal-backdrop';
@@ -754,7 +777,7 @@ const NotificationManager = {
     },
 
     async clearAll() {
-        if (!confirm('Are you sure you want to clear all notification history? Broadcasts will also be hidden.')) return;
+        if (!await UI.confirm('Are you sure you want to clear all notification history? Broadcasts will also be hidden.', 'Clear All Notifications')) return;
 
         const user = await SessionManager.getCurrentUser();
         if (!user) return;
@@ -2054,7 +2077,7 @@ const DiscussionManager = {
     },
 
     async delete(id, onDelete) {
-        if (!confirm('Delete this message?')) return;
+        if (!await UI.confirm('Delete this message?', 'Delete Discussion')) return;
         try {
             await SupabaseDB.deleteDiscussion(id);
             if (onDelete) onDelete();
