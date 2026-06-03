@@ -225,6 +225,81 @@ window.escapeAttr = function(s) {
 
 // Common UI and Logic
 const UI = {
+    safeHTML(html) {
+        if (!html) return '';
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const whitelist = ['B', 'I', 'U', 'STRONG', 'EM', 'BR'];
+        const clean = (node) => {
+            for (let i = node.childNodes.length - 1; i >= 0; i--) {
+                const child = node.childNodes[i];
+                if (child.nodeType === 1) {
+                    if (!whitelist.includes(child.tagName)) {
+                        const text = document.createTextNode(child.textContent);
+                        node.replaceChild(text, child);
+                    } else {
+                        clean(child);
+                    }
+                }
+            }
+        };
+        clean(doc.body);
+        return doc.body.innerHTML;
+    },
+
+    renderRichText(content) {
+        if (!content) return '';
+        if (/<(b|i|u|strong|em|br)/i.test(content)) {
+            return this.safeHTML(content);
+        }
+        return escapeHtml(content).replace(/\n/g, '<br>');
+    },
+
+    createRTE(textareaId, options = {}) {
+        const textarea = document.getElementById(textareaId);
+        if (!textarea) return;
+
+        const container = document.createElement('div');
+        container.className = 'rte-container mb-10';
+        container.innerHTML = `
+            <div class="rte-toolbar flex gap-5 mb-5">
+                <button type="button" class="button secondary tiny w-auto rte-btn-bold" title="Bold" style="min-width:30px"><b>B</b></button>
+                <button type="button" class="button secondary tiny w-auto rte-btn-italic" title="Italic" style="min-width:30px"><i>I</i></button>
+                <button type="button" class="button secondary tiny w-auto rte-btn-underline" title="Underline" style="min-width:30px"><u>U</u></button>
+            </div>
+            <div class="rte-editor input" contenteditable="true" style="min-height: ${options.minHeight || '80px'}; height: auto; overflow-y: auto; background: #fff;"></div>
+        `;
+
+        textarea.style.display = 'none';
+        textarea.parentNode.insertBefore(container, textarea.nextSibling);
+
+        const editor = container.querySelector('.rte-editor');
+        editor.innerHTML = this.renderRichText(textarea.value);
+
+        const sync = () => {
+            textarea.value = this.safeHTML(editor.innerHTML);
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+
+        editor.oninput = sync;
+        editor.onblur = sync;
+
+        container.querySelector('.rte-btn-bold').onclick = () => { document.execCommand('bold', false); editor.focus(); sync(); };
+        container.querySelector('.rte-btn-italic').onclick = () => { document.execCommand('italic', false); editor.focus(); sync(); };
+        container.querySelector('.rte-btn-underline').onclick = () => { document.execCommand('underline', false); editor.focus(); sync(); };
+
+        editor.onpaste = (e) => {
+            e.preventDefault();
+            const text = e.clipboardData.getData('text/plain');
+            document.execCommand('insertText', false, text);
+            sync();
+        };
+
+        return {
+            destroy: () => container.remove(),
+            sync: sync
+        };
+    },
+
     renderStats(containerId, stats) {
         const container = document.getElementById(containerId);
         if (!container) return;
@@ -1412,7 +1487,7 @@ UI.renderDiscussion = function(containerId, discussions, currentUserEmail, optio
                             ` : ''}
                         </div>
                     </div>
-                    <div class="mt-5 disc-content">${escapeHtml(d.content)}</div>
+                    <div class="mt-5 disc-content">${UI.renderRichText(d.content)}</div>
                     <div id="reply-area-${d.id}"></div>
                     ${renderThread(d.id, depth + 1)}
                 </div>
@@ -1426,12 +1501,13 @@ UI.renderDiscussion = function(containerId, discussions, currentUserEmail, optio
             <div id="disc-list" class="mt-20 mb-20" style="max-height:500px; overflow-y:auto">
                 ${renderThread() || '<div class="empty">No messages yet. Start the conversation!</div>'}
             </div>
-            <div class="flex gap-10">
-                <input type="text" id="discInputMain" placeholder="Start a new thread..." class="m-0">
+            <div class="flex-column gap-10">
+                <textarea id="discInputMain" placeholder="Start a new thread..." class="m-0" style="display:none"></textarea>
                 <button class="button w-auto" onclick="UI._dispatchDiscussionAction('${containerId}', 'post', null)">Post</button>
             </div>
         </div>
     `;
+    UI.createRTE('discInputMain');
 
     // Internal action dispatcher
     UI._discussionOptions = UI._discussionOptions || {};
@@ -1445,12 +1521,13 @@ UI._dispatchDiscussionAction = function(containerId, action, id) {
     if (action === 'reply') {
         const area = document.getElementById(`reply-area-${id}`);
         area.innerHTML = `
-            <div class="flex gap-10 mt-10">
-                <input type="text" id="replyInput-${id}" placeholder="Write a reply..." class="m-0 small p-10">
+            <div class="flex-column gap-10 mt-10">
+                <textarea id="replyInput-${id}" placeholder="Write a reply..." class="m-0 small p-10" style="display:none"></textarea>
                 <button class="button small w-auto" onclick="UI._dispatchDiscussionAction('${containerId}', 'post', '${id}')">Reply</button>
                 <button class="button secondary small w-auto" onclick="this.parentElement.remove()">Cancel</button>
             </div>
         `;
+        UI.createRTE(`replyInput-${id}`, { minHeight: '60px' });
     } else if (action === 'post') {
         const inputId = id ? `replyInput-${id}` : 'discInputMain';
         const content = document.getElementById(inputId).value;
@@ -1945,17 +2022,19 @@ const DiscussionManager = {
         const div = document.getElementById(`disc-${id}`);
         if (!div) return;
         const contentDiv = div.querySelector('.disc-content');
-        const current = contentDiv.innerText;
+        const current = contentDiv.innerHTML;
+
         contentDiv.innerHTML = `
-            <textarea class="input" style="margin-top:10px">${escapeHtml(current)}</textarea>
+            <textarea id="edit-disc-input-${id}" class="input" style="margin-top:10px; display:none">${current}</textarea>
             <div style="margin-top:8px; display:flex; gap:8px">
                 <button class="button" style="padding:4px 8px; font-size:11px" id="save-disc-${id}">Save</button>
                 <button class="button secondary" style="padding:4px 8px; font-size:11px" id="cancel-disc-${id}">Cancel</button>
             </div>
         `;
+        UI.createRTE(`edit-disc-input-${id}`, { minHeight: '60px' });
 
         document.getElementById(`save-disc-${id}`).onclick = async () => {
-            const content = contentDiv.querySelector('textarea').value;
+            const content = document.getElementById(`edit-disc-input-${id}`).value;
             if (!content) return;
             try {
                 // Fetching individual record for consistency check if needed,
@@ -1970,7 +2049,7 @@ const DiscussionManager = {
         };
 
         document.getElementById(`cancel-disc-${id}`).onclick = () => {
-            contentDiv.innerText = current;
+            contentDiv.innerHTML = current;
         };
     },
 

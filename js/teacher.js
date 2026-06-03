@@ -62,7 +62,7 @@ async function renderCourses() {
       ${courses.map(c => `
         <div class="card">
           <h3 class="m-0">${escapeHtml(c.title)}</h3>
-          <p class="small">${escapeHtml(c.description || '')}</p>
+          <div class="small">${UI.renderRichText(c.description)}</div>
           <div class="mt-10"><span class="badge ${c.status === 'published' ? 'badge-active' : 'badge-lock'}">${escapeHtml(c.status)}</span></div>
           <div class="flex gap-10 mt-15">
             <button class="button w-auto small" onclick="editCourse('${escapeAttr(c.id)}')">Manage Lessons</button>
@@ -130,6 +130,7 @@ function showCourseForm(course = null) {
       </form>
     </div>
   `;
+  UI.createRTE('courseDescription');
   document.getElementById('courseForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = e.target.querySelector('button[type="submit"]');
@@ -208,7 +209,10 @@ async function editCourse(id) {
           ${topicsWithLessons.map(t => `
             <div class="mb-20">
               <div class="flex-between p-10 bg-light border-radius-sm mb-5">
-                <strong class="small">${escapeHtml(t.title)}</strong>
+                <div style="flex:1">
+                  <strong class="small d-block">${escapeHtml(t.title)}</strong>
+                  <div class="tiny text-muted mt-2">${UI.renderRichText(t.description)}</div>
+                </div>
                 <div class="flex gap-5">
                   <button class="button tiny w-auto secondary" onclick="void showTopicForm('${id}', ${escapeAttr(JSON.stringify(t))})">Edit Topic</button>
                   <button class="button tiny w-auto danger" onclick="deleteTopicById('${t.id}', '${id}')">Delete</button>
@@ -304,6 +308,7 @@ async function showLessonForm(courseId, lesson = null) {
       </form>
     </div>
   `;
+  UI.createRTE('lessonContent', { minHeight: '300px' });
   document.getElementById('lessonForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = e.target.querySelector('button[type="submit"]');
@@ -396,6 +401,7 @@ function showTopicForm(courseId, topic = null) {
       </form>
     </div>
   `;
+  UI.createRTE('topicDescription');
   document.getElementById('topicForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = e.target.querySelector('button[type="submit"]');
@@ -483,7 +489,7 @@ async function renderAssignments() {
         <div class="card">
           <h3 class="m-0">${escapeHtml(a.title)}</h3>
           <p class="small"><strong>Course:</strong> ${escapeHtml(course?.title || 'None')}</p>
-          <p class="small">${escapeHtml(a.description || '')}</p>
+          <div class="small">${UI.renderRichText(a.description)}</div>
           <div class="mt-10">
             <p class="small m-0 mb-5">Due: ${new Date(a.due_date).toLocaleString()}</p>
             ${new Date(a.due_date) > new Date() ? `
@@ -729,6 +735,7 @@ window.addQuestionField = (q = null) => {
   if (!container) return;
   const div = document.createElement('div');
   div.className = 'question mb-20 card';
+    const qId = 'q-text-' + Date.now() + Math.random().toString(36).substring(2, 9);
   div.innerHTML = `
     <div class="flex-between mb-15">
       <h4 class="m-0">Assignment Question</h4>
@@ -737,7 +744,7 @@ window.addQuestionField = (q = null) => {
     <div class="grid">
       <div class="mb-10">
         <label class="bold">Question Text:</label>
-        <input type="text" class="q-text" placeholder="Enter question description here..." value="${q ? escapeHtml(q.text) : ''}" required>
+        <textarea id="${qId}" class="q-text" placeholder="Enter question description here..." required style="display:none">${q ? escapeHtml(q.text) : ''}</textarea>
       </div>
       <div class="grid-2">
         <div><label>Submission Type:</label><select class="q-type" onchange="toggleTeacherAssignmentType(this)"><option value="essay" ${q?.type === 'essay' ? 'selected' : ''}>Essay Text</option><option value="file" ${q?.type === 'file' ? 'selected' : ''}>File Upload (PDF, Docx, etc.)</option><option value="link" ${q?.type === 'link' ? 'selected' : ''}>Link Submission</option></select></div>
@@ -749,6 +756,7 @@ window.addQuestionField = (q = null) => {
     </div>
   `;
   container.appendChild(div);
+  UI.createRTE(qId, { minHeight: '60px' });
 
   // Auto-update total points when individual question points change
   div.querySelector('.q-points').addEventListener('input', window.updateAssignmentTotalPoints);
@@ -851,6 +859,7 @@ async function showAssignmentForm(assignment = null, courseId = null) {
       </form>
     </div>
   `;
+  UI.createRTE('assignmentDescription');
   window.toggleTeacherAssignmentType = (select) => {
     const container = select.parentElement.parentElement.parentElement.querySelector('.q-type-ext');
     if (select.value === 'file') {
@@ -1036,9 +1045,9 @@ async function gradeSubmission(assignmentId, studentEmail) {
               const answer = submissionAnswers[idx];
               const score = submission?.question_scores?.[idx] ?? (submission?.status === 'graded' ? 0 : null);
               const isUrl = typeof answer === 'string' && (answer.startsWith('http://') || answer.startsWith('https://'));
-              const displayAnswer = answer ? (isUrl ? `<button type="button" class="button secondary small w-auto" onclick="UI.viewFile('${escapeAttr(answer)}', 'Student Submission - Q${idx+1}')">View Submitted File/Link</button>` : `<div class="small p-10 mt-5" style="white-space: pre-wrap; background: #f7fafc; border-radius: 4px;">${escapeHtml(answer)}</div>`) : '<div class="small p-10 mt-5 text-muted italic">No answer provided.</div>';
+              const displayAnswer = answer ? (isUrl ? `<button type="button" class="button secondary small w-auto" onclick="UI.viewFile('${escapeAttr(answer)}', 'Student Submission - Q${idx+1}')">View Submitted File/Link</button>` : `<div class="small p-10 mt-5" style="background: #f7fafc; border-radius: 4px;">${UI.renderRichText(answer)}</div>`) : '<div class="small p-10 mt-5 text-muted italic">No answer provided.</div>';
               return `<div class="list-item mb-20 card border-light">
-                <div class="bold mb-5">Question ${idx + 1}: ${escapeHtml(q.text)}</div>
+                <div class="bold mb-5">Question ${idx + 1}: ${UI.renderRichText(q.text)}</div>
                 <div class="mt-5">${displayAnswer}</div>
                 <div class="mt-10 flex-center-y gap-10 p-10 bg-light border-radius-sm">
                     <label class="small m-0">Points Earned (max ${q.points}):</label>
@@ -1074,6 +1083,7 @@ async function gradeSubmission(assignmentId, studentEmail) {
       </form>
     </div>
   `;
+  UI.createRTE('feedback');
   const rawInput = document.getElementById('grade');
   const finalInput = document.getElementById('finalGrade');
 
@@ -2112,6 +2122,7 @@ async function renderQuizzes() {
         <div class="card">
           <h3 class="m-0">${escapeHtml(q.title)}</h3>
           <p class="small"><strong>Course:</strong> ${escapeHtml(course?.title || 'None')}</p>
+          <div class="small mb-5">${UI.renderRichText(q.description)}</div>
           <p class="small">Status: ${q.status}</p>
           <p class="small">Questions: ${q.questions?.length || 0}</p>
           ${q.start_at || q.end_at ? `
@@ -2225,11 +2236,13 @@ async function showQuizForm(quiz = null) {
       </form>
     </div>
   `;
+  UI.createRTE('quizDesc');
   window.addQuizQuestionField = (q = null) => {
     const container = document.getElementById('quizQuestionsContainer');
     if (!container) return;
     const div = document.createElement('div');
     div.className = 'question mb-20 card';
+    const qId = 'quiz-q-text-' + Date.now() + Math.random().toString(36).substring(2, 9);
     div.innerHTML = `
       <div class="flex-between mb-15">
         <h4 class="m-0">Quiz Question</h4>
@@ -2237,7 +2250,7 @@ async function showQuizForm(quiz = null) {
       </div>
       <div class="mb-10">
         <label class="bold">Question Text:</label>
-        <input type="text" class="q-text" placeholder="Enter quiz question here..." value="${q ? escapeHtml(q.text) : ''}" required>
+        <textarea id="${qId}" class="q-text" placeholder="Enter quiz question here..." required style="display:none">${q ? escapeHtml(q.text) : ''}</textarea>
       </div>
       <div class="grid-2 mt-10">
         <div>
@@ -2264,6 +2277,7 @@ async function showQuizForm(quiz = null) {
       </div>
     `;
     container.appendChild(div);
+    UI.createRTE(qId, { minHeight: '60px' });
     div.querySelector('.q-points').addEventListener('input', window.updateQuizTotalPoints);
     div.querySelector('.q-points').addEventListener('change', window.updateQuizTotalPoints);
     window.updateQuizTotalPoints();
@@ -2512,16 +2526,16 @@ async function gradeQuizSubmission(submissionId, quizId) {
             return `
               <div class="question" style="border-left: 5px solid ${statusColor}">
                 <div class="flex-between">
-                  <div class="bold">Q${idx + 1}: ${escapeHtml(q.text)}</div>
+                  <div class="bold">Q${idx + 1}: ${UI.renderRichText(q.text)}</div>
                   <div class="badge ${isCorrect ? 'badge-active' : 'badge-warn'}">${currentPoints} / ${q.points} pts ${!isAutoGraded ? '(Manual)' : ''}</div>
                 </div>
                 <div class="mt-5">
                   <span class="small">Type: ${q.type.toUpperCase()}</span>
                 </div>
                 <div class="small p-10 mt-10" style="background:white; border:1px solid var(--border); border-radius:4px">
-                  <strong class="text-muted">Student Answer:</strong> <span class="bold ${isCorrect ? 'success-text' : 'danger-text'}">${escapeHtml(studentDisplay)}</span>
+                  <strong class="text-muted">Student Answer:</strong> <span class="bold ${isCorrect ? 'success-text' : 'danger-text'}">${UI.renderRichText(studentDisplay)}</span>
                 </div>
-                ${!isCorrect ? `<div class="small success-text bold mt-5">Correct Answer: ${escapeHtml(correctDisplay)}</div>` : ''}
+                ${!isCorrect ? `<div class="small success-text bold mt-5">Correct Answer: ${UI.renderRichText(correctDisplay)}</div>` : ''}
 
                 ${!isAutoGraded ? `
                   <div class="mt-10 flex-center-y gap-10">
@@ -2942,6 +2956,7 @@ async function showMaterialForm() {
     </div>
   `;
 
+  UI.createRTE('matDesc');
   UI.createFileUploader('materialUploaderContainer', {
     bucket: 'materials',
     pathPrefix: 'course-content',
