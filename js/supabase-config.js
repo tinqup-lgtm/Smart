@@ -191,18 +191,29 @@ class SupabaseDB {
 
     // User operations
     static async getUsers(options = {}) {
-        const { searchTerm = '', role = null, resetStatus = null } = options;
+        const { searchTerm = '', role = null, resetStatus = null, status = null, page = 1, pageSize = 20 } = options;
         return this._request(async () => {
             let query = supabaseClient.from('users').select('*', { count: 'exact' });
             if (role) query = query.eq('role', role);
             if (resetStatus) query = query.eq('reset_request->>status', resetStatus);
+
+            if (status === 'active') query = query.eq('active', true);
+            else if (status === 'inactive') query = query.eq('active', false);
+            else if (status === 'flagged') query = query.eq('flagged', true);
+            else if (status === 'locked') query = query.gt('locked_until', new Date().toISOString());
+
             if (searchTerm) {
                 query = query.or(`full_name.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%`);
             }
+
+            const from = (page - 1) * pageSize;
+            const to = from + pageSize - 1;
+
             const { data, count, error } = await query
-                .order('full_name', { ascending: true });
+                .order('full_name', { ascending: true })
+                .range(from, to);
             if (error) throw error;
-            return { data: data || [], total: count || 0 };
+            return { data: data || [], total: count || 0, page, pageSize };
         });
     }
 
@@ -390,7 +401,7 @@ class SupabaseDB {
     // Assignment operations
     static async getAssignments(teacherEmail = null, courseId = null, courseIds = null, options = {}) {
         if (courseIds && courseIds.length === 0) return { data: [], total: 0 };
-        const { searchTerm = '' } = options;
+        const { searchTerm = '', page = 1, pageSize = 20 } = options;
 
         return this._request(async () => {
             let query = supabaseClient.from('assignments').select('*', { count: 'exact' });
@@ -399,10 +410,14 @@ class SupabaseDB {
             if (courseIds && courseIds.length > 0) query = query.in('course_id', courseIds);
             if (searchTerm) query = query.ilike('title', `%${searchTerm}%`);
 
+            const from = (page - 1) * pageSize;
+            const to = from + pageSize - 1;
+
             const { data, count, error } = await query
-                .order('due_date', { ascending: false });
+                .order('due_date', { ascending: false })
+                .range(from, to);
             if (error) throw error;
-            return { data: data || [], total: count || 0 };
+            return { data: data || [], total: count || 0, page, pageSize };
         });
     }
 
@@ -543,7 +558,7 @@ class SupabaseDB {
 
     // Submission operations
     static async getSubmissions(assignmentId = null, studentEmail = null, teacherEmail = null, options = {}) {
-        const { status = null, pendingGradingOnly = false } = options;
+        const { status = null, pendingGradingOnly = false, page = 1, pageSize = 20 } = options;
         return this._request(async () => {
             let selectStr = '*, assignments(*)';
             if (teacherEmail) selectStr = '*, assignments!inner(*)';
@@ -559,10 +574,14 @@ class SupabaseDB {
                 query = query.eq('status', status);
             }
 
+            const from = (page - 1) * pageSize;
+            const to = from + pageSize - 1;
+
             const { data, count, error } = await query
-                .order('submitted_at', { ascending: false });
+                .order('submitted_at', { ascending: false })
+                .range(from, to);
             if (error) throw error;
-            return { data: data || [], total: count || 0 };
+            return { data: data || [], total: count || 0, page, pageSize };
         });
     }
 
@@ -795,17 +814,21 @@ class SupabaseDB {
 
     // Course operations
     static async getCourses(teacherEmail = null, status = null, options = {}) {
-        const { searchTerm = '' } = options;
+        const { searchTerm = '', page = 1, pageSize = 20 } = options;
         return this._request(async () => {
             let query = supabaseClient.from('courses').select('*', { count: 'exact' });
             if (teacherEmail) query = query.eq('teacher_email', teacherEmail);
             if (status) query = query.eq('status', status);
             if (searchTerm) query = query.ilike('title', `%${searchTerm}%`);
 
+            const from = (page - 1) * pageSize;
+            const to = from + pageSize - 1;
+
             const { data, count, error } = await query
-                .order('title', { ascending: true });
+                .order('title', { ascending: true })
+                .range(from, to);
             if (error) throw error;
-            return { data: data || [], total: count || 0 };
+            return { data: data || [], total: count || 0, page, pageSize };
         });
     }
 
@@ -969,7 +992,7 @@ class SupabaseDB {
     // Quiz operations
     static async getQuizzes(courseId = null, teacherEmail = null, courseIds = null, options = {}) {
         if (courseIds && courseIds.length === 0) return { data: [], total: 0 };
-        const { searchTerm = '' } = options;
+        const { searchTerm = '', page = 1, pageSize = 20 } = options;
 
         return this._request(async () => {
             let query = supabaseClient.from('quizzes').select('*', { count: 'exact' });
@@ -978,10 +1001,14 @@ class SupabaseDB {
             if (courseIds && courseIds.length > 0) query = query.in('course_id', courseIds);
             if (searchTerm) query = query.ilike('title', `%${searchTerm}%`);
 
+            const from = (page - 1) * pageSize;
+            const to = from + pageSize - 1;
+
             const { data, count, error } = await query
-                .order('created_at', { ascending: false });
+                .order('created_at', { ascending: false })
+                .range(from, to);
             if (error) throw error;
-            return { data: data || [], total: count || 0 };
+            return { data: data || [], total: count || 0, page, pageSize };
         });
     }
 
@@ -1013,7 +1040,7 @@ class SupabaseDB {
     }
 
     static async getQuizSubmissions(quizId = null, studentEmail = null, teacherEmail = null, options = {}) {
-        const { status = null } = options;
+        const { status = null, page = 1, pageSize = 20 } = options;
         return this._request(async () => {
             let query = supabaseClient.from('quiz_submissions').select('*, quizzes!quiz_id(*)', { count: 'exact' });
             if (quizId) query = query.eq('quiz_id', quizId);
@@ -1021,10 +1048,14 @@ class SupabaseDB {
             if (teacherEmail) query = query.eq('quizzes.teacher_email', teacherEmail);
             if (status) query = query.eq('status', status);
 
+            const from = (page - 1) * pageSize;
+            const to = from + pageSize - 1;
+
             const { data, count, error } = await query
-                .order('started_at', { ascending: false });
+                .order('started_at', { ascending: false })
+                .range(from, to);
             if (error) throw error;
-            return { data: data || [], total: count || 0 };
+            return { data: data || [], total: count || 0, page, pageSize };
         });
     }
 
@@ -1243,14 +1274,20 @@ class SupabaseDB {
         return data?.[0];
     }
 
-    static async getCertificates(studentEmail, options = {}) {
+    static async getCertificates(studentEmail = null, options = {}) {
+        const { page = 1, pageSize = 20 } = options;
         return this._request(async () => {
-            const { data, count, error } = await supabaseClient
-                .from('certificates')
-                .select('*, courses(*)', { count: 'exact' })
-                .eq('student_email', studentEmail);
+            let query = supabaseClient.from('certificates').select('*, courses(*)', { count: 'exact' });
+            if (studentEmail) query = query.eq('student_email', studentEmail);
+
+            const from = (page - 1) * pageSize;
+            const to = from + pageSize - 1;
+
+            const { data, count, error } = await query
+                .order('issued_at', { ascending: false })
+                .range(from, to);
             if (error) throw error;
-            return { data: data || [], total: count || 0 };
+            return { data: data || [], total: count || 0, page, pageSize };
         });
     }
 
@@ -1337,15 +1374,20 @@ class SupabaseDB {
         return data?.[0];
     }
 
-    static async getStudySessions(email, options = {}) {
+    static async getStudySessions(email = null, options = {}) {
+        const { page = 1, pageSize = 20 } = options;
         return this._request(async () => {
-            const { data, count, error } = await supabaseClient
-                .from('study_sessions')
-                .select('*', { count: 'exact' })
-                .eq('user_email', email)
-                .order('started_at', { ascending: false });
+            let query = supabaseClient.from('study_sessions').select('*', { count: 'exact' });
+            if (email) query = query.eq('user_email', email);
+
+            const from = (page - 1) * pageSize;
+            const to = from + pageSize - 1;
+
+            const { data, count, error } = await query
+                .order('started_at', { ascending: false })
+                .range(from, to);
             if (error) throw error;
-            return { data: data || [], total: count || 0 };
+            return { data: data || [], total: count || 0, page, pageSize };
         });
     }
 
@@ -1403,18 +1445,24 @@ class SupabaseDB {
         return data?.[0];
     }
 
-    static async getAttendance(classId, studentEmail = null, options = {}) {
+    static async getAttendance(classId = null, studentEmail = null, options = {}) {
+        const { page = 1, pageSize = 20 } = options;
         return this._request(async () => {
             let query = supabaseClient
                 .from('attendance')
-                .select('*', { count: 'exact' })
-                .eq('live_class_id', classId);
+                .select('*, live_classes(title), courses(title)', { count: 'exact' });
+
+            if (classId) query = query.eq('live_class_id', classId);
             if (studentEmail) query = query.eq('student_email', studentEmail);
 
+            const from = (page - 1) * pageSize;
+            const to = from + pageSize - 1;
+
             const { data, count, error } = await query
-                .order('join_time', { ascending: true });
+                .order('join_time', { ascending: false })
+                .range(from, to);
             if (error) throw error;
-            return { data: data || [], total: count || 0 };
+            return { data: data || [], total: count || 0, page, pageSize };
         });
     }
 
@@ -1497,15 +1545,21 @@ class SupabaseDB {
     }
 
 
-    static async getSupportTickets(userEmail = null) {
+    static async getSupportTickets(userEmail = null, options = {}) {
+        const { page = 1, pageSize = 20, status = null } = options;
         return this._request(async () => {
             let query = supabaseClient.from('support_tickets').select('*', { count: 'exact' });
             if (userEmail) query = query.eq('user_email', userEmail);
+            if (status) query = query.eq('status', status);
+
+            const from = (page - 1) * pageSize;
+            const to = from + pageSize - 1;
 
             const { data, count, error } = await query
-                .order('created_at', { ascending: false });
+                .order('created_at', { ascending: false })
+                .range(from, to);
             if (error) throw error;
-            return { data: data || [], total: count || 0 };
+            return { data: data || [], total: count || 0, page, pageSize };
         });
     }
 
@@ -1524,11 +1578,14 @@ class SupabaseDB {
     }
 
     static async getViolations(assessmentId = null, userEmail = null, teacherEmail = null, options = {}) {
+        const { assessmentType = null, severity = null, page = 1, pageSize = 20 } = options;
         return this._request(async () => {
+            let query = supabaseClient.from('violations').select('*', { count: 'exact' });
+
             if (teacherEmail) {
                 // Get teacher's course IDs first
                 const { data: courses } = await this.getCourses(teacherEmail, null);
-                const courseIds = (courses || []).map(c => c.id);
+                const courseIds = (courses.data || []).map(c => c.id);
                 if (courseIds.length === 0) return { data: [], total: 0 };
 
                 // Get assignments and quizzes for these courses
@@ -1536,26 +1593,25 @@ class SupabaseDB {
                     this.getAssignments(null, null, courseIds),
                     this.getQuizzes(null, null, courseIds)
                 ]);
-                const assessmentIds = [...(assigns || []).map(a => a.id), ...(quizzes || []).map(q => q.id)];
+                const assessmentIds = [...(assigns.data || []).map(a => a.id), ...(quizzes.data || []).map(q => q.id)];
                 if (assessmentIds.length === 0) return { data: [], total: 0 };
 
-                const { data, count, error } = await supabaseClient
-                    .from('violations')
-                    .select('*', { count: 'exact' })
-                    .in('assessment_id', assessmentIds)
-                    .order('timestamp', { ascending: false });
-                if (error) throw error;
-                return { data: data || [], total: count || 0 };
+                query = query.in('assessment_id', assessmentIds);
             }
 
-            let query = supabaseClient.from('violations').select('*', { count: 'exact' });
             if (assessmentId) query = query.eq('assessment_id', assessmentId);
             if (userEmail) query = query.eq('user_email', userEmail);
+            if (assessmentType) query = query.eq('assessment_type', assessmentType);
+            if (severity) query = query.eq('severity', severity);
+
+            const from = (page - 1) * pageSize;
+            const to = from + pageSize - 1;
 
             const { data, count, error } = await query
-                .order('timestamp', { ascending: false });
+                .order('timestamp', { ascending: false })
+                .range(from, to);
             if (error) throw error;
-            return { data: data || [], total: count || 0 };
+            return { data: data || [], total: count || 0, page, pageSize };
         });
     }
 
