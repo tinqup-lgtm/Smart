@@ -694,14 +694,20 @@ window.addEventListener('appinstalled', () => {
 // Global notification system
 const NotificationManager = {
     _polling: false,
+    _isUpdating: false,
+    _channel: window.BroadcastChannel ? new BroadcastChannel('smartlms_notifications') : null,
 
     async fetchNotifications() {
         try {
             const user = await SessionManager.getCurrentUser();
             if (!user) return [];
 
-            // 1. Fetch personal notifications and active broadcasts
-            // RLS now handles role and course-specific filtering for broadcasts
+            // 1. Fetch fresh user data to get metadata-based tracking
+            // Use bypassCache=true to ensure cross-tab/device sync of read/cleared state
+            const freshUser = await SupabaseDB.getUser(user.email, true);
+            const metadata = freshUser?.metadata || {};
+
+            // 2. Fetch personal notifications and active broadcasts
             const [personalRes, broadcastsRes] = await Promise.all([
                 SupabaseDB.getNotifications(user.email),
                 SupabaseDB.getBroadcasts()
@@ -710,29 +716,39 @@ const NotificationManager = {
             const personal = personalRes.data || [];
             const broadcasts = broadcastsRes.data || [];
 
-            // 2. Filter broadcasts based on recency (e.g. last 14 days)
+            // 3. Filter broadcasts based on recency (last 14 days)
             const recentDate = new Date();
             recentDate.setDate(recentDate.getDate() - 14);
-
             const relevantBroadcasts = broadcasts.filter(b => new Date(b.created_at) >= recentDate);
 
-            // 3. Filter out cleared broadcasts
-            const clearedBroadcasts = JSON.parse(localStorage.getItem(`cleared_broadcasts_${user.email}`) || '[]');
+            // 4. Filter out cleared broadcasts (using metadata fallback to localStorage for migration)
+            const clearedMetadata = metadata.cleared_broadcasts || [];
+            const clearedLocal = JSON.parse(localStorage.getItem(`cleared_broadcasts_${user.email}`) || '[]');
+            const clearedBroadcasts = [...new Set([...clearedMetadata, ...clearedLocal])];
+
             const activeBroadcasts = relevantBroadcasts.filter(b => !clearedBroadcasts.includes(b.id));
 
-            // 4. Mark broadcasts as "read" locally using localStorage
-            const readBroadcasts = JSON.parse(localStorage.getItem(`read_broadcasts_${user.email}`) || '[]');
+            // 5. Mark broadcasts as "read" (using metadata fallback to localStorage)
+            const readMetadata = metadata.read_broadcasts || [];
+            const readLocal = JSON.parse(localStorage.getItem(`read_broadcasts_${user.email}`) || '[]');
+            const readBroadcasts = [...new Set([...readMetadata, ...readLocal])];
+
             const mappedBroadcasts = activeBroadcasts.map(b => ({
                 ...b,
                 is_read: readBroadcasts.includes(b.id),
                 is_broadcast: true
             }));
 
-            // 5. Combine and sort
-            return [...personal, ...mappedBroadcasts].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            // 6. Combine, deduplicate by ID, and sort
+            const all = [...personal, ...mappedBroadcasts];
+            const uniqueMap = new Map();
+            all.forEach(n => {
+                if (!uniqueMap.has(n.id)) uniqueMap.set(n.id, n);
+            });
+
+            return Array.from(uniqueMap.values()).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
         } catch (e) {
             console.warn('Failed to fetch notifications:', e);
-            UI.showNotification('Could not update notifications. Retrying...', 'error');
             return [];
         }
     },
@@ -759,17 +775,22 @@ const NotificationManager = {
 
         try {
             const notifications = await this.fetchNotifications();
+            const freshUser = await SupabaseDB.getUser(user.email);
+            const metadata = freshUser?.metadata || {};
 
-            // Mark personal notifications in DB
+            // 1. Mark personal notifications in DB
             await SupabaseDB.markNotificationsAsRead(user.email);
 
-            // Mark broadcasts in localStorage
+            // 2. Mark broadcasts in metadata
             const broadcastIds = notifications.filter(n => n.is_broadcast).map(n => n.id);
-            const readBroadcasts = JSON.parse(localStorage.getItem(`read_broadcasts_${user.email}`) || '[]');
-            const updatedRead = [...new Set([...readBroadcasts, ...broadcastIds])];
-            localStorage.setItem(`read_broadcasts_${user.email}`, JSON.stringify(updatedRead));
+            const readBroadcasts = [...new Set([...(metadata.read_broadcasts || []), ...broadcastIds])];
 
-            this.updateUI();
+            await SupabaseDB.saveUser({
+                ...freshUser,
+                metadata: { ...metadata, read_broadcasts: readBroadcasts }
+            });
+
+            this.updateUI(true); // Notify other tabs
             UI.showNotification('All notifications marked as read', 'success');
         } catch (e) {
             console.error('Failed to mark all as read:', e);
@@ -784,16 +805,21 @@ const NotificationManager = {
 
         try {
             const notifications = await this.fetchNotifications();
+            const freshUser = await SupabaseDB.getUser(user.email);
+            const metadata = freshUser?.metadata || {};
 
-            // Clear broadcasts by saving their IDs to cleared_broadcasts
+            // 1. Clear broadcasts by saving their IDs to cleared_broadcasts metadata
             const broadcastIds = notifications.filter(n => n.is_broadcast).map(n => n.id);
-            const clearedBroadcasts = JSON.parse(localStorage.getItem(`cleared_broadcasts_${user.email}`) || '[]');
-            const updatedCleared = [...new Set([...clearedBroadcasts, ...broadcastIds])];
-            localStorage.setItem(`cleared_broadcasts_${user.email}`, JSON.stringify(updatedCleared));
+            const clearedBroadcasts = [...new Set([...(metadata.cleared_broadcasts || []), ...broadcastIds])];
 
-            // Actually delete personal notifications for this user using SupabaseDB
+            await SupabaseDB.saveUser({
+                ...freshUser,
+                metadata: { ...metadata, cleared_broadcasts: clearedBroadcasts }
+            });
+
+            // 2. Actually delete personal notifications for this user using SupabaseDB
             await SupabaseDB.deleteNotifications(user.email);
-            this.updateUI();
+            this.updateUI(true); // Notify other tabs
             UI.showNotification('Notifications cleared', 'info');
         } catch (e) {
             console.error('Failed to clear notifications:', e);
@@ -801,93 +827,96 @@ const NotificationManager = {
         }
     },
 
-    async updateUI() {
-        const notifications = await this.fetchNotifications();
-        const unreadCount = notifications.filter(n => !n.is_read).length;
-        
-        const unreadBadge = document.getElementById('unreadCount');
-        if (unreadBadge) {
-            unreadBadge.textContent = unreadCount;
-            unreadBadge.style.display = unreadCount > 0 ? 'flex' : 'none';
+    async updateUI(broadcast = false) {
+        if (this._isUpdating) return;
+        this._isUpdating = true;
+
+        if (broadcast && this._channel) {
+            this._channel.postMessage({ type: 'UPDATE_UI' });
         }
 
         const list = document.getElementById('notifList');
-        if (list) {
-            try {
-            const itemsHtml = notifications.map(n => `
-                <div class="notif-item" style="padding:12px; border-bottom:1px solid #f0f0f0; background:${n.is_read ? '#fff' : '#f0f4ff'}; cursor:pointer; transition: background 0.2s"
-                        onclick="NotificationManager.handleNotificationClick('${n.id}', ${!!n.is_broadcast}, '${n.link || ''}')">
-                    <div style="display:flex; justify-content:space-between; align-items:start">
-                        <div style="font-weight:600; font-size:13px; color:var(--text)">${n.is_broadcast ? '📢 ' : ''}${escapeHtml(n.title)}</div>
-                        ${!n.is_read ? '<div style="width:8px; height:8px; background:var(--purple); border-radius:50%; margin-top:4px"></div>' : ''}
-                    </div>
-                    <div style="font-size:12px; color:#555; margin-top:4px; line-height:1.4">${escapeHtml(n.message)}</div>
-                    <div style="font-size:10px; color:#999; margin-top:8px; display:flex; justify-content:space-between">
-                        <span>${new Date(n.created_at).toLocaleString()}</span>
-                        ${n.is_broadcast ? '<span style="color:var(--purple); font-weight:bold">BROADCAST</span>' : ''}
-                    </div>
-                </div>
-            `).join('');
+        if (list) list.style.opacity = '0.7';
 
-            list.innerHTML = `
-                <div style="padding:12px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; background:#fafafa; position:sticky; top:0; z-index:10">
-                    <div class="flex-center-y gap-10">
-                        <button class="button secondary tiny" style="width:24px; height:24px; padding:0; margin:0; display:flex; align-items:center; justify-content:center; border-radius:50%" onclick="document.getElementById('notifList').classList.remove('active'); event.stopPropagation();">✕</button>
-                        <strong style="font-size:14px">Notifications</strong>
-                    </div>
-                    <div class="flex gap-5">
-                        <button class="button secondary tiny" style="width:auto; margin:0" onclick="NotificationManager.markAllAsRead(); event.stopPropagation();">Mark Read</button>
-                        <button class="button danger tiny" style="width:auto; margin:0; background:#fee2e2; color:#b91c1c" onclick="NotificationManager.clearAll(); event.stopPropagation();">Clear All</button>
-                    </div>
-                </div>
-                <div class="notif-items-container" style="max-height:350px; overflow-y:auto; scroll-behavior: smooth;">
-                    ${notifications.length === 0 ? '<div style="padding:40px 20px; text-align:center; color:#999"><div style="font-size:32px; margin-bottom:10px">🔔</div>No notifications yet</div>' : itemsHtml}
-                </div>
-            `;
+        try {
+            const notifications = await this.fetchNotifications();
+            const unreadCount = notifications.filter(n => !n.is_read).length;
 
-            // Ensure the view scrolls to the last message if they are plenty
-            const container = list.querySelector('.notif-items-container');
-            if (container && notifications.length > 0) {
-                container.style.paddingBottom = '20px';
-                // Use a small timeout to ensure the DOM is rendered before scrolling
-                setTimeout(() => {
-                    container.scrollTop = container.scrollHeight;
-                }, 100);
+            const unreadBadge = document.getElementById('unreadCount');
+            if (unreadBadge) {
+                unreadBadge.textContent = unreadCount;
+                unreadBadge.style.display = unreadCount > 0 ? 'flex' : 'none';
             }
-            } catch (e) {
-                console.warn('Error updating notif list:', e);
-                list.innerHTML = '<div style="padding:10px">Could not load notifications.</div>';
-            }
-        }
-        
-        // Browser notification for new unread ones
-        const user = await SessionManager.getCurrentUser();
-        if (user) {
-            const storageKey = `last_notified_id_${user.email}`;
-            const lastNotifiedId = localStorage.getItem(storageKey);
 
-            // Newest notifications are first in the list
-            const latest = notifications.find(n => !n.is_read);
+            if (list) {
+                const itemsHtml = notifications.map(n => `
+                    <div class="notif-item" style="padding:12px; border-bottom:1px solid #f0f0f0; background:${n.is_read ? '#fff' : '#f0f4ff'}; cursor:pointer; transition: background 0.2s"
+                            onclick="NotificationManager.handleNotificationClick('${n.id}', ${!!n.is_broadcast}, '${n.link || ''}')">
+                        <div style="display:flex; justify-content:space-between; align-items:start">
+                            <div style="font-weight:600; font-size:13px; color:var(--text)">${n.is_broadcast ? '📢 ' : ''}${escapeHtml(n.title)}</div>
+                            ${!n.is_read ? '<div style="width:8px; height:8px; background:var(--purple); border-radius:50%; margin-top:4px"></div>' : ''}
+                        </div>
+                        <div style="font-size:12px; color:#555; margin-top:4px; line-height:1.4">${escapeHtml(n.message)}</div>
+                        <div style="font-size:10px; color:#999; margin-top:8px; display:flex; justify-content:space-between">
+                            <span>${new Date(n.created_at).toLocaleString()}</span>
+                            ${n.is_broadcast ? '<span style="color:var(--purple); font-weight:bold">BROADCAST</span>' : ''}
+                        </div>
+                    </div>
+                `).join('');
 
-            if (latest && latest.id !== lastNotifiedId) {
-                this.sendBrowserNotification(latest.title, latest.message);
-                localStorage.setItem(storageKey, latest.id);
-            } else if (!latest) {
-                // If all are read, clear the tracker so the next new one triggers correctly
-                localStorage.removeItem(storageKey);
+                list.innerHTML = `
+                    <div style="padding:12px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; background:#fafafa; position:sticky; top:0; z-index:10">
+                        <div class="flex-center-y gap-10">
+                            <button class="button secondary tiny" style="width:24px; height:24px; padding:0; margin:0; display:flex; align-items:center; justify-content:center; border-radius:50%" onclick="document.getElementById('notifList').classList.remove('active'); event.stopPropagation();">✕</button>
+                            <strong style="font-size:14px">Notifications</strong>
+                        </div>
+                        <div class="flex gap-5">
+                            <button class="button secondary tiny" style="width:auto; margin:0" onclick="NotificationManager.markAllAsRead(); event.stopPropagation();">Mark Read</button>
+                            <button class="button danger tiny" style="width:auto; margin:0; background:#fee2e2; color:#b91c1c" onclick="NotificationManager.clearAll(); event.stopPropagation();">Clear All</button>
+                        </div>
+                    </div>
+                    <div class="notif-items-container" style="max-height:350px; overflow-y:auto; scroll-behavior: smooth;">
+                        ${notifications.length === 0 ? '<div style="padding:40px 20px; text-align:center; color:#999"><div style="font-size:32px; margin-bottom:10px">🔔</div>No notifications yet</div>' : itemsHtml}
+                    </div>
+                `;
+
+                const container = list.querySelector('.notif-items-container');
+                if (container && notifications.length > 0) {
+                    container.style.paddingBottom = '20px';
+                }
             }
+
+            // Browser notification for new unread ones
+            const user = await SessionManager.getCurrentUser();
+            if (user) {
+                const storageKey = `last_notified_id_${user.email}`;
+                const lastNotifiedId = localStorage.getItem(storageKey);
+                const latest = notifications.find(n => !n.is_read);
+
+                if (latest && latest.id !== lastNotifiedId) {
+                    this.sendBrowserNotification(latest.title, latest.message);
+                    localStorage.setItem(storageKey, latest.id);
+                } else if (!latest) {
+                    localStorage.removeItem(storageKey);
+                }
+            }
+        } catch (e) {
+            console.warn('Error updating notif list:', e);
+        } finally {
+            if (list) list.style.opacity = '1';
+            this._isUpdating = false;
         }
     },
 
     async handleNotificationClick(id, isBroadcast, link) {
         if (isBroadcast) {
-            this.markBroadcastRead(id);
+            await this.markBroadcastRead(id);
         } else {
             try {
                 const user = await SessionManager.getCurrentUser();
                 if (user) {
                     await SupabaseDB.markNotificationsAsRead(user.email, id);
-                    this.updateUI();
+                    this.updateUI(true);
                 }
             } catch (e) {
                 console.warn('Failed to mark notification as read:', e);
@@ -917,16 +946,24 @@ const NotificationManager = {
         }
     },
 
-    markBroadcastRead(id) {
-        SessionManager.getCurrentUser().then(user => {
+    async markBroadcastRead(id) {
+        try {
+            const user = await SessionManager.getCurrentUser();
             if (!user) return;
-            const readBroadcasts = JSON.parse(localStorage.getItem(`read_broadcasts_${user.email}`) || '[]');
-            if (!readBroadcasts.includes(id)) {
-                readBroadcasts.push(id);
-                localStorage.setItem(`read_broadcasts_${user.email}`, JSON.stringify(readBroadcasts));
-                this.updateUI();
-            }
-        });
+
+            const freshUser = await SupabaseDB.getUser(user.email);
+            const metadata = freshUser?.metadata || {};
+            const readBroadcasts = [...new Set([...(metadata.read_broadcasts || []), id])];
+
+            await SupabaseDB.saveUser({
+                ...freshUser,
+                metadata: { ...metadata, read_broadcasts: readBroadcasts }
+            });
+
+            this.updateUI(true);
+        } catch (e) {
+            console.warn('Failed to mark broadcast as read:', e);
+        }
     },
 
     async renderSettings(containerId, pushDesc = 'Enable real-time desktop notifications.') {
@@ -1005,8 +1042,22 @@ const NotificationManager = {
     initPolling() {
         if (this._polling) return;
         this._polling = true;
+
+        // Listen for updates from other tabs
+        if (this._channel) {
+            this._channel.onmessage = (event) => {
+                if (event.data && event.data.type === 'UPDATE_UI') {
+                    // Invalidate local caches to fetch fresh data from server
+                    if (typeof SupabaseDB !== 'undefined' && SupabaseDB.invalidateCache) {
+                        SupabaseDB.invalidateCache();
+                    }
+                    this.updateUI(false); // Update UI without re-broadcasting
+                }
+            };
+        }
+
         this.updateUI();
-        setInterval(() => this.updateUI(), 60000); // Poll every 60s
+        setInterval(() => this.updateUI(), 180000); // Poll every 3 minutes (180s)
         
         // Request browser permission if not set
         if (Notification.permission === 'default') {
@@ -1040,7 +1091,15 @@ const NotificationManager = {
     initRealtimeSubscriptions(email, role, onTableChange = null) {
         if (!window.supabaseClient) return;
 
-        const channel = window.supabaseClient.channel(`${role}-db-changes`);
+        const channelId = `${role}-db-changes`;
+
+        // Cleanup existing channel if re-initializing to prevent duplicate subscriptions
+        const existing = window.supabaseClient.getChannels().find(c => c.topic === `realtime:public:${channelId}` || c.name === channelId);
+        if (existing) {
+            window.supabaseClient.removeChannel(existing);
+        }
+
+        const channel = window.supabaseClient.channel(channelId);
 
         // Always subscribe to personal notifications
         channel.on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_email=eq.${email}` }, () => {
