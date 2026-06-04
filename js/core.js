@@ -693,9 +693,37 @@ window.addEventListener('appinstalled', () => {
 
 // Global notification system
 const NotificationManager = {
-    _polling: false,
     _isUpdating: false,
+    _updatePromise: Promise.resolve(),
+    _needsUpdate: false,
     _channel: window.BroadcastChannel ? new BroadcastChannel('smartlms_notifications') : null,
+
+    /**
+     * Queues a UI update, ensuring sequential execution to prevent race conditions.
+     */
+    async queueUpdate(broadcastOtherTabs = false) {
+        if (broadcastOtherTabs && this._channel) {
+            this._channel.postMessage({ type: 'UPDATE_UI' });
+        }
+
+        if (this._isUpdating) {
+            this._needsUpdate = true;
+            return;
+        }
+
+        this._isUpdating = true;
+        this._updatePromise = (async () => {
+            try {
+                await this.updateUI();
+            } finally {
+                this._isUpdating = false;
+                if (this._needsUpdate) {
+                    this._needsUpdate = false;
+                    this.queueUpdate();
+                }
+            }
+        })();
+    },
 
     async fetchNotifications() {
         try {
@@ -703,7 +731,6 @@ const NotificationManager = {
             if (!user) return [];
 
             // 1. Fetch fresh user data to get metadata-based tracking
-            // Use bypassCache=true to ensure cross-tab/device sync of read/cleared state
             const freshUser = await SupabaseDB.getUser(user.email, true);
             const metadata = freshUser?.metadata || {};
 
@@ -721,50 +748,24 @@ const NotificationManager = {
             recentDate.setDate(recentDate.getDate() - 14);
             const relevantBroadcasts = broadcasts.filter(b => new Date(b.created_at) >= recentDate);
 
-            // 4. Migration & Filtering of cleared/read broadcasts
-            const clearedLocal = JSON.parse(localStorage.getItem(`cleared_broadcasts_${user.email}`) || '[]');
-            const readLocal = JSON.parse(localStorage.getItem(`read_broadcasts_${user.email}`) || '[]');
-
-            if (clearedLocal.length > 0 || readLocal.length > 0) {
-                const updatedMetadata = { ...metadata };
-                if (clearedLocal.length > 0) {
-                    updatedMetadata.cleared_broadcasts = [...new Set([...(metadata.cleared_broadcasts || []), ...clearedLocal])];
-                }
-                if (readLocal.length > 0) {
-                    updatedMetadata.read_broadcasts = [...new Set([...(metadata.read_broadcasts || []), ...readLocal])];
-                }
-
-                // One-time migration: Push to server
-                await SupabaseDB.saveUser({ ...freshUser, metadata: updatedMetadata });
-
-                // Clear local only after successful server update
-                if (clearedLocal.length > 0) localStorage.removeItem(`cleared_broadcasts_${user.email}`);
-                if (readLocal.length > 0) localStorage.removeItem(`read_broadcasts_${user.email}`);
-
-                // Update local references for filtering below
-                metadata.cleared_broadcasts = updatedMetadata.cleared_broadcasts;
-                metadata.read_broadcasts = updatedMetadata.read_broadcasts;
-            }
-
+            // 4. Filter broadcasts based on clearance metadata
             const clearedBroadcasts = metadata.cleared_broadcasts || [];
-            const activeBroadcasts = relevantBroadcasts.filter(b => !clearedBroadcasts.includes(b.id));
-
             const readBroadcasts = metadata.read_broadcasts || [];
 
-            const mappedBroadcasts = activeBroadcasts.map(b => ({
-                ...b,
-                is_read: readBroadcasts.includes(b.id),
-                is_broadcast: true
-            }));
+            const activeBroadcasts = relevantBroadcasts
+                .filter(b => !clearedBroadcasts.includes(b.id))
+                .map(b => ({
+                    ...b,
+                    is_read: readBroadcasts.includes(b.id),
+                    is_broadcast: true
+                }));
 
-            // 6. Combine, deduplicate by ID, and sort
-            const all = [...personal, ...mappedBroadcasts];
+            // 5. Combine, deduplicate, and sort
+            const all = [...personal, ...activeBroadcasts];
             const uniqueMap = new Map();
-            all.forEach(n => {
-                if (!uniqueMap.has(n.id)) uniqueMap.set(n.id, n);
-            });
+            all.forEach(n => { if (!uniqueMap.has(n.id)) uniqueMap.set(n.id, n); });
 
-            return Array.from(uniqueMap.values()).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            return Array.from(uniqueMap.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
         } catch (e) {
             console.warn('Failed to fetch notifications:', e);
             return [];
@@ -786,7 +787,6 @@ const NotificationManager = {
         UI.showNotification('Notification preferences updated.');
     },
 
-
     async markAllAsRead() {
         const user = await SessionManager.getCurrentUser();
         if (!user) return;
@@ -796,10 +796,8 @@ const NotificationManager = {
             const freshUser = await SupabaseDB.getUser(user.email);
             const metadata = freshUser?.metadata || {};
 
-            // 1. Mark personal notifications in DB
             await SupabaseDB.markNotificationsAsRead(user.email);
 
-            // 2. Mark broadcasts in metadata
             const broadcastIds = notifications.filter(n => n.is_broadcast).map(n => n.id);
             const readBroadcasts = [...new Set([...(metadata.read_broadcasts || []), ...broadcastIds])];
 
@@ -808,7 +806,7 @@ const NotificationManager = {
                 metadata: { ...metadata, read_broadcasts: readBroadcasts }
             });
 
-            this.updateUI(true); // Notify other tabs
+            this.queueUpdate(true);
             UI.showNotification('All notifications marked as read', 'success');
         } catch (e) {
             console.error('Failed to mark all as read:', e);
@@ -826,7 +824,6 @@ const NotificationManager = {
             const freshUser = await SupabaseDB.getUser(user.email);
             const metadata = freshUser?.metadata || {};
 
-            // 1. Clear broadcasts by saving their IDs to cleared_broadcasts metadata
             const broadcastIds = notifications.filter(n => n.is_broadcast).map(n => n.id);
             const clearedBroadcasts = [...new Set([...(metadata.cleared_broadcasts || []), ...broadcastIds])];
 
@@ -835,9 +832,8 @@ const NotificationManager = {
                 metadata: { ...metadata, cleared_broadcasts: clearedBroadcasts }
             });
 
-            // 2. Actually delete personal notifications for this user using SupabaseDB
             await SupabaseDB.deleteNotifications(user.email);
-            this.updateUI(true); // Notify other tabs
+            this.queueUpdate(true);
             UI.showNotification('Notifications cleared', 'info');
         } catch (e) {
             console.error('Failed to clear notifications:', e);
@@ -845,14 +841,7 @@ const NotificationManager = {
         }
     },
 
-    async updateUI(broadcast = false) {
-        if (this._isUpdating) return;
-        this._isUpdating = true;
-
-        if (broadcast && this._channel) {
-            this._channel.postMessage({ type: 'UPDATE_UI' });
-        }
-
+    async updateUI() {
         const list = document.getElementById('notifList');
         const badge = document.getElementById('unreadCount');
 
@@ -875,10 +864,9 @@ const NotificationManager = {
             const notifications = await this.fetchNotifications();
             const unreadCount = notifications.filter(n => !n.is_read).length;
 
-            const unreadBadge = document.getElementById('unreadCount');
-            if (unreadBadge) {
-                unreadBadge.textContent = unreadCount;
-                unreadBadge.style.display = unreadCount > 0 ? 'flex' : 'none';
+            if (badge) {
+                badge.textContent = unreadCount;
+                badge.style.display = unreadCount > 0 ? 'flex' : 'none';
             }
 
             if (list) {
@@ -912,25 +900,33 @@ const NotificationManager = {
                         ${notifications.length === 0 ? '<div style="padding:40px 20px; text-align:center; color:#999"><div style="font-size:32px; margin-bottom:10px">🔔</div>No notifications yet</div>' : itemsHtml}
                     </div>
                 `;
-
-                const container = list.querySelector('.notif-items-container');
-                if (container && notifications.length > 0) {
-                    container.style.paddingBottom = '20px';
-                }
             }
 
-            // Browser notification for new unread ones
+            // Enforce One-Time Alert Policy
             const user = await SessionManager.getCurrentUser();
             if (user) {
-                const storageKey = `last_notified_id_${user.email}`;
-                const lastNotifiedId = localStorage.getItem(storageKey);
-                const latest = notifications.find(n => !n.is_read);
+                const freshUser = await SupabaseDB.getUser(user.email);
+                const metadata = freshUser?.metadata || {};
+                const alertedIds = metadata.alerted_ids || [];
+                const prefs = await this.getPreferences();
 
-                if (latest && latest.id !== lastNotifiedId) {
-                    this.sendBrowserNotification(latest.title, latest.message);
-                    localStorage.setItem(storageKey, latest.id);
-                } else if (!latest) {
-                    localStorage.removeItem(storageKey);
+                // Find ALL un-alerted notifications
+                const unalerted = notifications.filter(n => !n.is_read && !alertedIds.includes(n.id));
+
+                if (unalerted.length > 0 && prefs.inApp) {
+                    unalerted.forEach(n => {
+                        this.sendBrowserNotification(n.title, n.message);
+                        UI.showNotification(n.title, 'info');
+                    });
+
+                    // Mark as alerted globally
+                    const updatedAlerted = [...new Set([...alertedIds, ...unalerted.map(n => n.id)])];
+                    await SupabaseDB.saveUser({ ...freshUser, metadata: { ...metadata, alerted_ids: updatedAlerted } });
+
+                    // Sync other tabs
+                    if (this._channel) {
+                        this._channel.postMessage({ type: 'ALERT_SHOWN', ids: unalerted.map(n => n.id) });
+                    }
                 }
             }
         } catch (e) {
@@ -941,7 +937,6 @@ const NotificationManager = {
                 const spinner = list.querySelector('.mini-spinner');
                 if (spinner) spinner.style.display = 'none';
             }
-            this._isUpdating = false;
         }
     },
 
@@ -953,7 +948,7 @@ const NotificationManager = {
                 const user = await SessionManager.getCurrentUser();
                 if (user) {
                     await SupabaseDB.markNotificationsAsRead(user.email, id);
-                    this.updateUI(true);
+                    this.queueUpdate(true);
                 }
             } catch (e) {
                 console.warn('Failed to mark notification as read:', e);
@@ -997,7 +992,7 @@ const NotificationManager = {
                 metadata: { ...metadata, read_broadcasts: readBroadcasts }
             });
 
-            this.updateUI(true);
+            this.queueUpdate(true);
         } catch (e) {
             console.warn('Failed to mark broadcast as read:', e);
         }
@@ -1077,26 +1072,27 @@ const NotificationManager = {
     },
 
     initPolling() {
-        if (this._polling) return;
-        this._polling = true;
+        // Polling is now legacy; the system is event-driven via Realtime.
+        // We maintain this for initial setup and tab synchronization.
+        if (this._initialized) return;
+        this._initialized = true;
 
-        // Listen for updates from other tabs
         if (this._channel) {
             this._channel.onmessage = (event) => {
-                if (event.data && event.data.type === 'UPDATE_UI') {
-                    // Invalidate local caches to fetch fresh data from server
-                    if (typeof SupabaseDB !== 'undefined' && SupabaseDB.invalidateCache) {
-                        SupabaseDB.invalidateCache();
+                if (event.data) {
+                    if (event.data.type === 'UPDATE_UI') {
+                        if (typeof SupabaseDB !== 'undefined') SupabaseDB.invalidateCache();
+                        this.queueUpdate(false);
+                    } else if (event.data.type === 'ALERT_SHOWN') {
+                        // Silent update to local cache of alerted IDs if needed, or just refresh
+                        if (typeof SupabaseDB !== 'undefined') SupabaseDB.invalidateCache();
                     }
-                    this.updateUI(false); // Update UI without re-broadcasting
                 }
             };
         }
 
-        this.updateUI();
-        setInterval(() => this.updateUI(), 180000); // Poll every 3 minutes (180s)
+        this.queueUpdate(false);
         
-        // Request browser permission if not set
         if (Notification.permission === 'default') {
             requestNotificationPermission();
         }
@@ -1112,7 +1108,6 @@ const NotificationManager = {
                     e.stopPropagation();
                     if (list) {
                         const isActive = list.classList.contains('active');
-                        // Close all other dropdowns if any, then toggle this one
                         document.querySelectorAll('.notif-list.active').forEach(el => el.classList.remove('active'));
                         if (!isActive) list.classList.add('active');
                     }
@@ -1141,12 +1136,12 @@ const NotificationManager = {
         // Always subscribe to personal notifications
         channel.on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_email=eq.${email}` }, () => {
             SupabaseDB.invalidateCache(`notifications_${email}`);
-            this.updateUI();
+            this.queueUpdate();
         });
 
         channel.on('postgres_changes', { event: '*', schema: 'public', table: 'broadcasts' }, () => {
             SupabaseDB.invalidateCache('broadcasts_active');
-            this.updateUI();
+            this.queueUpdate();
         });
 
         // Optional callback for specific dashboard table changes
