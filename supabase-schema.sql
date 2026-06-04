@@ -2288,12 +2288,17 @@ CREATE POLICY "Discussions: Delete" ON discussions FOR DELETE USING (
 
 -- 13. Notifications Table
 DROP POLICY IF EXISTS "Notifications: User Access" ON notifications;
+DROP POLICY IF EXISTS "Notifications: SELECT" ON notifications;
+DROP POLICY IF EXISTS "Notifications: UPDATE" ON notifications;
+DROP POLICY IF EXISTS "Notifications: DELETE" ON notifications;
 CREATE POLICY "Notifications: SELECT" ON notifications FOR SELECT USING (is_admin() OR user_email = get_auth_email());
 CREATE POLICY "Notifications: UPDATE" ON notifications FOR UPDATE USING (user_email = get_auth_email()) WITH CHECK (user_email = get_auth_email());
 CREATE POLICY "Notifications: DELETE" ON notifications FOR DELETE USING (is_admin() OR user_email = get_auth_email());
 
 -- 14. Broadcasts Table
 DROP POLICY IF EXISTS "Broadcasts: Access" ON broadcasts;
+DROP POLICY IF EXISTS "Broadcasts: SELECT" ON broadcasts;
+DROP POLICY IF EXISTS "Broadcasts: MANAGE" ON broadcasts;
 CREATE POLICY "Broadcasts: SELECT" ON broadcasts FOR SELECT USING (
   is_admin() OR
   teacher_email = get_auth_email() OR
@@ -2314,7 +2319,6 @@ CREATE POLICY "Broadcasts: SELECT" ON broadcasts FOR SELECT USING (
   )
 );
 
-DROP POLICY IF EXISTS "Broadcasts: Manage" ON broadcasts;
 CREATE POLICY "Broadcasts: MANAGE" ON broadcasts FOR ALL USING (is_admin() OR teacher_email = get_auth_email());
 
 -- 15. Maintenance Table
