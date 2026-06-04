@@ -3,14 +3,14 @@
     'use strict';
 
     // ============================================
-    // GLOBAL TIMER MANAGER (Replaces React Context)
+    // GLOBAL TIMER MANAGER
     // ============================================
     const TimerManager = {
-        currentTime: Date.now(),
+        _currentTime: Date.now(),
         serverOffset: 0,
         intervalId: null,
         listeners: new Set(),
-        tickInterval: 1000, // Update every second
+        tickInterval: 1000,
         isSyncing: false,
 
         async syncWithServer() {
@@ -32,9 +32,13 @@
                 console.warn('TimerManager: Server sync failed, using local clock.', e);
             } finally {
                 this.isSyncing = false;
-                this.currentTime = Date.now() + this.serverOffset;
+                this._updateInternalTime();
                 this.notifyListeners();
             }
+        },
+
+        _updateInternalTime() {
+            this._currentTime = Date.now() + this.serverOffset;
         },
 
         init() {
@@ -42,11 +46,10 @@
 
             this.syncWithServer();
             this.intervalId = setInterval(() => {
-                this.currentTime = Date.now() + this.serverOffset;
+                this._updateInternalTime();
                 this.notifyListeners();
             }, this.tickInterval);
 
-            // Visibility/Focus recovery
             if (!this._visibilityHandler) {
                 this._visibilityHandler = () => {
                     if (document.visibilityState === 'visible') {
@@ -76,7 +79,7 @@
         },
 
         getTime() {
-            return this.currentTime;
+            return this._currentTime;
         },
 
         subscribe(callback) {
@@ -84,8 +87,8 @@
             if (this.listeners.size === 1) {
                 this.init();
             }
-            // Trigger immediately with current time
-            callback(this.currentTime);
+            // Immediate notification
+            callback(this.getTime());
             return () => {
                 this.listeners.delete(callback);
                 if (this.listeners.size === 0) {
@@ -95,9 +98,10 @@
         },
 
         notifyListeners() {
+            const now = this.getTime();
             this.listeners.forEach(cb => {
                 try {
-                    cb(this.currentTime);
+                    cb(now);
                 } catch (e) {
                     console.error('TimerManager listener error:', e);
                 }
@@ -106,431 +110,382 @@
     };
 
     // ============================================
-    // UTILITY HELPERS
-    // ============================================
-    const escapeHtml = (str) => {
-        if (str === null || str === undefined) return '';
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-    };
-
-    const Icons = {
-        Clock: (size = 18) => `
-            <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"
-                 viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <polyline points="12 6 12 12 16 14"></polyline>
-            </svg>
-        `
-    };
-
-    // ============================================
-    // COUNTDOWN CLASS
+    // COUNTDOWN CLASS (Enhanced for Multiple Schedules)
     // ============================================
     const CountdownRegistry = new WeakMap();
 
     class Countdown {
+        _escape(str) {
+            if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+            if (str === null || str === undefined) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
         constructor(options = {}) {
-            // Props with defaults
-            this.targetDate = options.targetDate || new Date();
-            this.startTime = options.startTime || null;
-            this.startAt = options.startAt || null;
+            // Configuration with clarified naming
+            this.schedules = Array.isArray(options.schedules) ? options.schedules : null;
+
+            // Legacy/Single target support (remapped internally)
+            this.targetDate = options.targetDate || options.target || null;
+            this.startDate = options.startDate || options.startAt || null;
+            this.referenceDate = options.referenceDate || options.startTime || options.start || null;
+
             this.onStart = options.onStart || null;
             this.onEnd = options.onEnd || null;
+            this.onTick = options.onTick || null;
+
             this.className = options.className || '';
             this.showIcon = options.showIcon !== false;
             this.showProgress = options.showProgress === true;
             this.compact = options.compact === true;
+            this.headless = options.headless === true;
+            this.status = options.status || 'published';
+
             this.endLabel = options.endLabel !== undefined ? options.endLabel : 'Ended';
             this.upcomingLabel = options.upcomingLabel || 'Starts in';
-            this.label = options.label || '';
-            this.status = options.status || 'published';
-            this.headless = options.headless === true;
-            this.onTick = options.onTick || null;
+            this.activeLabel = options.label || '';
 
-            // Internal state
+            // Internal State
             this.container = null;
-            this.timeLeft = null;
-            this.hasStartedCalled = false;
-            this.hasEndedCalled = false;
-            this.targetTimestamp = null;
-            this.unsubscribe = null;
             this.mounted = false;
+            this.unsubscribe = null;
+            this._hasStartedCalled = false;
+            this._hasEndedCalled = false;
+            this._currentPhase = null; // 'upcoming', 'active', 'ended'
+            this._activeScheduleIdx = -1;
 
-            // Create container if target element provided
             if (options.selector) {
                 this.mount(options.selector);
             }
         }
 
-        // Parse date to timestamp
         _parse(d) {
             if (d === null || d === undefined || d === '') return null;
-            // Handle numeric strings (timestamps)
+            if (typeof d === 'number') return isNaN(d) ? null : d;
             if (typeof d === 'string' && /^\d+$/.test(d)) {
                 const val = parseInt(d);
                 return isNaN(val) ? null : val;
             }
-            if (typeof d === 'number') return isNaN(d) ? null : d;
-
             try {
                 const ts = new Date(d).getTime();
                 return isNaN(ts) ? null : ts;
-            } catch (e) {
-                return null;
-            }
+            } catch (e) { return null; }
         }
 
-        parseTargetDate() {
-            const ts = this._parse(this.targetDate);
-            if (!ts && this.targetDate !== null && this.targetDate !== undefined && this.targetDate !== '') {
-                console.warn(`Countdown: Invalid targetDate provided: ${this.targetDate}`);
-                return null;
-            }
-            return ts;
-        }
-
-        // Calculate time remaining
-        calculateTimeLeft() {
-            if (!this.targetTimestamp) return null;
-
+        /**
+         * Resolves the current applicable schedule from the provided array or single target.
+         */
+        _resolveActiveSchedule() {
             const now = TimerManager.getTime();
-            const difference = this.targetTimestamp - now;
 
-            if (difference <= 0) {
-                return { days: 0, hours: 0, minutes: 0, seconds: 0, total: 0, isSoon: false, progress: 100 };
+            // Case 1: Multiple Schedules (Maintenance, Recurring events)
+            if (this.schedules && this.schedules.length > 0) {
+                // Find currently active schedule
+                const activeIdx = this.schedules.findIndex(s => {
+                    const start = this._parse(s.startAt || s.startDate);
+                    const end = this._parse(s.endAt || s.targetDate);
+                    return start && end && now >= start && now <= end;
+                });
+
+                if (activeIdx !== -1) {
+                    this._activeScheduleIdx = activeIdx;
+                    const s = this.schedules[activeIdx];
+                    return {
+                        phase: 'active',
+                        reference: this._parse(s.startAt || s.startDate),
+                        start: this._parse(s.startAt || s.startDate),
+                        target: this._parse(s.endAt || s.targetDate),
+                        label: s.label || this.activeLabel,
+                        endLabel: s.endLabel || this.endLabel
+                    };
+                }
+
+                // Find next upcoming schedule
+                const upcoming = this.schedules
+                    .map((s, idx) => ({ s, idx, start: this._parse(s.startAt || s.startDate) }))
+                    .filter(item => item.start && item.start > now)
+                    .sort((a, b) => a.start - b.start)[0];
+
+                if (upcoming) {
+                    this._activeScheduleIdx = upcoming.idx;
+                    const s = upcoming.s;
+                    return {
+                        phase: 'upcoming',
+                        reference: this._parse(s.created_at) || now,
+                        start: upcoming.start,
+                        target: upcoming.start, // Target for "Starts in"
+                        label: s.upcomingLabel || this.upcomingLabel
+                    };
+                }
+
+                return { phase: 'ended' };
             }
 
-            let progress = null;
-            if (this.startTime !== null && this.startTime !== undefined) {
-                const startTs = this._parse(this.startTime);
-                const endTs = this.targetTimestamp;
+            // Case 2: Single target (Assignments, Quizzes, etc.)
+            const startTs = this._parse(this.startDate);
+            const targetTs = this._parse(this.targetDate);
+            const refTs = this._parse(this.referenceDate);
 
-                // If we have a startAt and we're in the active phase, progress should be relative to startAt
-                let effectiveStart = startTs;
-                if (this.startAt) {
-                    const startAtTs = this._parse(this.startAt);
-                    if (startAtTs && now >= startAtTs) {
-                        effectiveStart = startAtTs;
-                    }
-                }
+            if (!targetTs) return { phase: 'invalid' };
 
-                if (effectiveStart !== null) {
-                    const totalDuration = endTs - effectiveStart;
-                    if (totalDuration > 0) {
-                        const elapsed = now - effectiveStart;
-                        progress = Math.max(0, Math.min(100, (elapsed / totalDuration) * 100));
-                    }
-                }
+            if (startTs && now < startTs) {
+                return {
+                    phase: 'upcoming',
+                    reference: refTs || now,
+                    start: startTs,
+                    target: startTs,
+                    label: this.upcomingLabel
+                };
+            }
+
+            if (now > targetTs) {
+                return { phase: 'ended' };
             }
 
             return {
+                phase: 'active',
+                reference: startTs || refTs || now,
+                start: startTs || refTs || now,
+                target: targetTs,
+                label: this.activeLabel
+            };
+        }
+
+        calculateState() {
+            const schedule = this._resolveActiveSchedule();
+            const now = TimerManager.getTime();
+
+            if (schedule.phase === 'ended') {
+                return { phase: 'ended', total: 0, progress: 100, endLabel: schedule.endLabel || this.endLabel };
+            }
+            if (schedule.phase === 'invalid') return null;
+
+            const difference = schedule.target - now;
+            let progress = null;
+
+            if (schedule.reference && schedule.target > schedule.reference) {
+                const totalDuration = schedule.target - schedule.reference;
+                const elapsed = now - schedule.reference;
+                progress = Math.max(0, Math.min(100, (elapsed / totalDuration) * 100));
+            }
+
+            return {
+                phase: schedule.phase,
                 days: Math.floor(difference / (1000 * 60 * 60 * 24)),
                 hours: Math.floor((difference / (1000 * 60 * 60)) % 24),
                 minutes: Math.floor((difference / 1000 / 60) % 60),
                 seconds: Math.floor((difference / 1000) % 60),
-                total: difference,
-                isSoon: difference > 0 && difference < 60 * 60 * 1000, // Less than 1 hour
-                progress: progress
+                total: Math.max(0, difference),
+                isSoon: difference > 0 && difference < 60 * 60 * 1000,
+                progress: progress,
+                label: schedule.label,
+                endLabel: schedule.endLabel || this.endLabel
             };
         }
 
-        // Initialize the countdown
         mount(selector) {
-            if (selector) {
-                this.container = typeof selector === 'string'
-                    ? document.querySelector(selector)
-                    : selector;
-            }
+            if (this.mounted) this.destroy();
+
+            this.container = typeof selector === 'string'
+                ? document.querySelector(selector)
+                : selector;
 
             if (!this.container && !this.headless) {
-                console.error(`Countdown: Element not found for selector: ${selector}`);
                 return this;
             }
 
-            // Parse target date
-            this.targetTimestamp = this.parseTargetDate();
-            if (!this.targetTimestamp) {
-                if (this.container) this.container.innerHTML = '';
-                return this;
-            }
-
-            // Reset ended state for new target
-            this.hasEndedCalled = false;
-
-            // Subscribe to timer updates
             this.unsubscribe = TimerManager.subscribe(() => this.update());
-
-            // Initial render
             this.mounted = true;
-            this.update();
-
             return this;
         }
 
-        // Update the display
         update() {
             if (!this.mounted) return;
 
-            // Handle Draft Status
             if (this.status === 'draft') {
-                if (this.container) {
-                    this.container.innerHTML = `
-                        <div class="countdown-wrapper">
-                            ${this.label ? `<div class="countdown-label small bold mb-5">${escapeHtml(this.label)}</div>` : ''}
-                            <div class="countdown-draft ${this.className}">
-                                ${this.showIcon ? Icons.Clock(this.compact ? 12 : 14) : ''}
-                                <span class="countdown-label uppercase bold">Draft</span>
-                            </div>
-                        </div>
-                    `;
-                }
+                this._renderDraft();
                 return;
             }
 
-            const now = TimerManager.getTime();
-
-            // Handle Start Window
-            if (this.startAt) {
-                const startTs = new Date(this.startAt).getTime();
-                if (now < startTs) {
-                    if (this.container) this.renderUpcoming(startTs - now);
-                    return;
-                } else if (!this.hasStartedCalled) {
-                    this.hasStartedCalled = true;
-                    if (typeof this.onStart === 'function') {
-                        try { this.onStart(); } catch (e) { console.error('Countdown onStart error:', e); }
-                    }
-                }
+            const state = this.calculateState();
+            if (!state) {
+                if (this.container) this.container.innerHTML = '';
+                return;
             }
 
-            this.timeLeft = this.calculateTimeLeft();
-
-            // Handle Tick callback
-            if (this.timeLeft && typeof this.onTick === 'function') {
-                try { this.onTick(this.timeLeft); } catch (e) { console.error('Countdown onTick error:', e); }
+            // Handle Transitions & Callbacks
+            if (state.phase === 'active' && !this._hasStartedCalled) {
+                this._hasStartedCalled = true;
+                if (typeof this.onStart === 'function') this.onStart();
             }
 
-            // Handle ended state
-            if (this.timeLeft && this.timeLeft.total <= 0) {
-                if (this.container) {
-                    if (this.endLabel === null) {
-                        this.container.innerHTML = '';
-                    } else {
-                        this.container.innerHTML = `
-                            <span class="countdown-ended ${this.className}">
-                                ${this.showIcon ? Icons.Clock(12) : ''}
-                                <span class="countdown-label">${escapeHtml(this.endLabel)}</span>
-                            </span>
-                        `;
-                    }
-                }
-
-                // Trigger onEnd callback once
-                if (!this.hasEndedCalled) {
-                    this.hasEndedCalled = true;
-                    if (typeof this.onEnd === 'function') {
-                        try { this.onEnd(); } catch (e) { console.error('Countdown onEnd error:', e); }
+            if (state.phase === 'ended') {
+                this._renderEnded(state);
+                if (!this._hasEndedCalled) {
+                    this._hasEndedCalled = true;
+                    if (typeof this.onEnd === 'function') this.onEnd();
+                    // If no more schedules, we can stop polling for this instance
+                    if (!this.schedules || this._activeScheduleIdx === -1 || this._activeScheduleIdx >= this.schedules.length - 1) {
+                        this.destroy(false); // Unsubscribe but keep DOM
                     }
                 }
                 return;
             }
 
-            if (!this.timeLeft) return;
+            // Reset ended flag if we transitioned to a new active/upcoming schedule
+            this._hasEndedCalled = false;
 
-            // Render countdown
-            if (this.container) this.render();
+            if (typeof this.onTick === 'function') this.onTick(state);
+
+            if (this.container) {
+                if (state.phase === 'upcoming') this._renderUpcoming(state);
+                else this._renderActive(state);
+            }
         }
 
-        renderUpcoming(diff) {
-            const now = TimerManager.getTime();
-            const minutes = Math.floor((diff / 1000 / 60) % 60);
-            const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
-            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        _renderDraft() {
+            if (!this.container) return;
+            this.container.innerHTML = `
+                <div class="countdown-wrapper">
+                    ${this.activeLabel ? `<div class="countdown-label small bold mb-5">${this._escape(this.activeLabel)}</div>` : ''}
+                    <div class="countdown-draft ${this.className}">
+                        ${this.showIcon ? this._getIcon(14) : ''}
+                        <span class="countdown-label uppercase bold">Draft</span>
+                    </div>
+                </div>
+            `;
+        }
 
-            let timeStr = '';
-            if (days > 0) timeStr = `${days}d ${hours}h`;
-            else if (hours > 0) timeStr = `${hours}h ${minutes}m`;
-            else timeStr = `${minutes}m`;
-
-            let progressHtml = '';
-            if (this.showProgress && this.startTime !== null) {
-                // If targetDate is the start goal (Opens in), progress is startTime -> targetDate
-                // If startAt is provided, progress is startTime -> startAt
-                const goalTs = this._parse(this.startAt) || this.targetTimestamp;
-                const createdTs = this._parse(this.startTime);
-
-                if (goalTs !== null && createdTs !== null) {
-                    const totalWait = goalTs - createdTs;
-                    const elapsed = now - createdTs;
-                    if (totalWait > 0) {
-                        const progress = Math.max(0, Math.min(100, (elapsed / totalWait) * 100));
-                        let stateClass = 'progress-ok';
-                        if (progress > 75) stateClass = 'progress-critical';
-                        else if (progress > 50) stateClass = 'progress-warn';
-
-                        progressHtml = `
-                            <div class="countdown-progress-container mt-5">
-                                <div class="countdown-progress-fill ${stateClass}" style="width: ${progress}%"></div>
-                            </div>
-                        `;
-                    }
-                }
+        _renderEnded(state) {
+            if (!this.container) return;
+            if (state.endLabel === null) {
+                this.container.innerHTML = '';
+            } else {
+                this.container.innerHTML = `
+                    <span class="countdown-ended ${this.className}">
+                        ${this.showIcon ? this._getIcon(12) : ''}
+                        <span class="countdown-label">${this._escape(state.endLabel)}</span>
+                    </span>
+                `;
             }
+        }
+
+        _renderUpcoming(state) {
+            const timeStr = state.days > 0 ? `${state.days}d ${state.hours}h` :
+                           state.hours > 0 ? `${state.hours}h ${state.minutes}m` : `${state.minutes}m`;
 
             this.container.innerHTML = `
                 <div class="countdown-upcoming-wrapper">
                     <div class="countdown-upcoming inline-flex items-center gap-1 ${this.className}">
-                        ${this.showIcon ? Icons.Clock(12) : ''}
-                        <span class="small-text">${escapeHtml(this.upcomingLabel)} ${timeStr}</span>
+                        ${this.showIcon ? this._getIcon(12) : ''}
+                        <span class="small-text">${this._escape(state.label)} ${timeStr}</span>
                     </div>
-                    ${progressHtml}
+                    ${this._getProgressHtml(state)}
                 </div>
             `;
         }
 
-        // Render the countdown UI
-        render() {
-            const { days, hours, minutes, seconds, isSoon, progress } = this.timeLeft;
+        _renderActive(state) {
+            const { days, hours, minutes, seconds, isSoon, label } = state;
             const iconSize = this.compact ? 14 : 18;
 
             const timeClasses = [
-                'countdown-display',
-                'inline-flex',
-                'items-center',
-                'gap-2',
+                'countdown-display inline-flex items-center gap-2',
                 isSoon ? 'countdown-soon' : 'countdown-normal',
                 this.className
             ].filter(Boolean).join(' ');
 
-            let progressHtml = '';
-            if (this.showProgress && progress !== null) {
-                let stateClass = 'progress-ok';
-                // URGENCE COLORS: Grow from 0 to 100.
-                // 0-50: OK (Green)
-                // 50-75: WARN (Yellow)
-                // 75-100: CRITICAL (Red)
-                if (progress > 75) stateClass = 'progress-critical';
-                else if (progress > 50) stateClass = 'progress-warn';
-
-                progressHtml = `
-                    <div class="countdown-progress-container mt-5">
-                        <div class="countdown-progress-fill ${stateClass}" style="width: ${progress}%"></div>
-                    </div>
-                `;
-            }
-
             let html = `
                 <div class="countdown-wrapper">
-                    ${this.label ? `<div class="countdown-label small bold mb-5">${escapeHtml(this.label)}</div>` : ''}
+                    ${label ? `<div class="countdown-label small bold mb-5">${this._escape(label)}</div>` : ''}
                     <div class="${timeClasses}">
-                        ${this.showIcon ? Icons.Clock(iconSize) : ''}
+                        ${this.showIcon ? this._getIcon(iconSize) : ''}
                         <div class="countdown-values flex gap-1 font-mono font-bold text-sm md:text-base">
             `;
 
-            // Days (only show if > 0)
-            if (days > 0) {
-                html += `
-                    <div class="countdown-unit flex flex-col items-center">
-                        <span>${days}${this.compact ? 'd' : ''}</span>
-                        ${!this.compact ? '<span class="text-[8px] uppercase tracking-tighter -mt-1 opacity-60">Days</span>' : ''}
-                    </div>
-                `;
-            }
+            if (days > 0) html += this._getUnitHtml(days, 'Days', 'd', false);
+            if (days > 0 || hours > 0) html += this._getUnitHtml(hours, 'Hrs', 'h', true);
+            html += this._getUnitHtml(minutes, 'Min', 'm', true);
+            html += this._getUnitHtml(seconds, 'Sec', 's', true);
 
-            // Hours (show if > 0 or days > 0)
-            if (days > 0 || hours > 0) {
-                html += `
-                    <div class="countdown-unit flex flex-col items-center">
-                        <span>${hours.toString().padStart(2, '0')}${this.compact ? 'h' : ''}</span>
-                        ${!this.compact ? '<span class="text-[8px] uppercase tracking-tighter -mt-1 opacity-60">Hrs</span>' : ''}
-                    </div>
-                `;
-            }
-
-            // Minutes (always show)
-            html += `
-                <div class="countdown-unit flex flex-col items-center">
-                    <span>${minutes.toString().padStart(2, '0')}${this.compact ? 'm' : ''}</span>
-                    ${!this.compact ? '<span class="text-[8px] uppercase tracking-tighter -mt-1 opacity-60">Min</span>' : ''}
-                </div>
-            `;
-
-            // Seconds (always show)
-            html += `
-                <div class="countdown-unit flex flex-col items-center">
-                    <span>${seconds.toString().padStart(2, '0')}${this.compact ? 's' : ''}</span>
-                    ${!this.compact ? '<span class="text-[8px] uppercase tracking-tighter -mt-1 opacity-60">Sec</span>' : ''}
-                </div>
-            `;
-
-            html += `
-                        </div>
-                    </div>
-                    ${progressHtml}
-                </div>
-            `;
-
+            html += `</div></div>${this._getProgressHtml(state)}</div>`;
             this.container.innerHTML = html;
         }
 
-        // Update target date dynamically
+        _getUnitHtml(val, long, short, pad) {
+            const displayVal = pad ? val.toString().padStart(2, '0') : val.toString();
+            return `
+                <div class="countdown-unit flex flex-col items-center">
+                    <span>${displayVal}${this.compact ? short : ''}</span>
+                    ${!!long && !this.compact ? `<span class="text-[8px] uppercase tracking-tighter -mt-1 opacity-60">${long}</span>` : ''}
+                </div>
+            `;
+        }
+
+        _getProgressHtml(state) {
+            if (!this.showProgress || state.progress === null) return '';
+            const urgencyClass = state.progress > 75 ? 'progress-critical' : (state.progress > 50 ? 'progress-warn' : 'progress-ok');
+            return `
+                <div class="countdown-progress-container mt-5">
+                    <div class="countdown-progress-fill ${urgencyClass}" style="width: ${state.progress}%"></div>
+                </div>
+            `;
+        }
+
+        _getIcon(size) {
+            return `
+                <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"
+                     viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+            `;
+        }
+
         setTargetDate(newDate) {
             this.targetDate = newDate;
-            this.targetTimestamp = this.parseTargetDate();
-            this.hasEndedCalled = false;
-            this.hasStartedCalled = false;
-            if (this.mounted) {
-                this.update();
-            }
+            this._hasEndedCalled = false;
+            this._hasStartedCalled = false;
+            if (this.mounted) this.update();
         }
 
-        // Update options dynamically
         setOptions(options) {
-            Object.keys(options).forEach(key => {
-                if (key in this && key !== 'container' && key !== 'unsubscribe') {
-                    this[key] = options[key];
-                }
-            });
-            if (this.mounted) {
-                this.update();
-            }
+            Object.assign(this, options);
+            if (this.mounted) this.update();
         }
 
-        // Cleanup
-        destroy() {
+        destroy(clearContainer = true) {
             if (this.unsubscribe) {
                 this.unsubscribe();
                 this.unsubscribe = null;
             }
-            if (this.container) {
+            if (clearContainer && this.container) {
                 this.container.innerHTML = '';
             }
             this.mounted = false;
         }
-
     }
 
     // ============================================
-    // STATIC HELPER: Create countdown instances
+    // STATIC HELPERS
     // ============================================
     Countdown.create = function(selector, options = {}) {
         const el = typeof selector === 'string' ? document.querySelector(selector) : selector;
-        if (!el) return null;
+        if (!el && !options.headless) return null;
 
-        if (CountdownRegistry.has(el)) {
+        if (el && CountdownRegistry.has(el)) {
             CountdownRegistry.get(el).destroy();
         }
 
-        // Merge options with data attributes for redundancy reduction
-        const ds = el.dataset;
+        const ds = el ? el.dataset : {};
         const mergedOptions = {
-            targetDate: options.targetDate || ds.target,
-            startTime: options.startTime || ds.start,
-            startAt: options.startAt || ds.startAt,
-            label: options.label || ds.label,
+            targetDate: options.targetDate || ds.target || ds.targetDate,
+            referenceDate: options.referenceDate || ds.reference || ds.start || ds.startTime,
+            startDate: options.startDate || ds.startDate || ds.startAt,
+            activeLabel: options.label || ds.label || ds.activeLabel,
             status: options.status || ds.status,
             upcomingLabel: options.upcomingLabel || ds.upcomingLabel,
             endLabel: options.endLabel !== undefined ? options.endLabel : ds.endLabel,
@@ -538,7 +493,7 @@
         };
 
         const instance = new Countdown({ ...mergedOptions, selector: el });
-        CountdownRegistry.set(el, instance);
+        if (el) CountdownRegistry.set(el, instance);
         return instance;
     };
 
@@ -547,15 +502,7 @@
         return Array.from(elements).map(el => Countdown.create(el, options));
     };
 
-    // ============================================
-    // EXPORT TO GLOBAL
-    // ============================================
     global.TimerManager = TimerManager;
     global.Countdown = Countdown;
-
-    // AMD / CommonJS support
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = { Countdown, TimerManager };
-    }
 
 })(typeof window !== 'undefined' ? window : this);

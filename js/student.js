@@ -42,7 +42,7 @@ async function _getDueSoonCount(email) {
       SupabaseDB.getSubmissions(null, email, null)
     ]);
 
-    const now = Date.now();
+    const now = TimerManager.getTime();
     return assigns.filter(a => {
       const dueDate = new Date(a.due_date).getTime();
       const isSubmitted = submissions.some(s => s.assignment_id === a.id);
@@ -365,7 +365,7 @@ async function renderAssignments(openId = null){
       SupabaseDB.getSubmissions(null, user.email, null)
     ]);
 
-    const now = Date.now();
+    const now = TimerManager.getTime();
 
     container.innerHTML = `
       <div class="flex-between mb-20">
@@ -727,11 +727,12 @@ async function renderDashboardOverview() {
     ]);
 
     updateHeaderStats().catch(e => console.warn('Header stats error:', e));
+    const now = TimerManager.getTime();
 
     const pendingAssignments = assigns.filter(a =>
       a.status === 'published' &&
       !submissions.some(s => s.assignment_id === a.id) &&
-      new Date(a.due_date) > new Date()
+      new Date(a.due_date).getTime() > now
     ).sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
 
     container.innerHTML = `
@@ -759,7 +760,7 @@ async function renderDashboardOverview() {
                 <div style="flex: 1">
                   <div class="bold">${escapeHtml(a.title)}</div>
                   <div class="tiny text-muted mb-5">Due: ${new Date(a.due_date).toLocaleDateString()}</div>
-                  <div class="dashboard-assign-countdown" data-target="${new Date(a.due_date).getTime()}" data-start="${a.start_at || (a.created_at ? new Date(a.created_at).getTime() : Date.now())}" data-status="${a.status || 'published'}"></div>
+                  <div class="dashboard-assign-countdown" data-target="${new Date(a.due_date).getTime()}" data-start="${a.start_at || (a.created_at ? new Date(a.created_at).getTime() : now)}" data-status="${a.status || 'published'}"></div>
                 </div>
                 <button class="button small w-auto mt-10" style="width: 80px" onclick="renderAssignments('${a.id}')">Submit</button>
               </div>
@@ -922,6 +923,7 @@ async function renderGrades() {
 
   try {
     const user = await SessionManager.getCurrentUser();
+    const now = TimerManager.getTime();
     // Optimization: Filter graded status on the server
     const [{ data: submissions }, { data: assigns }] = await Promise.all([
       SupabaseDB.getSubmissions(null, user.email, null, { status: 'graded' }),
@@ -1373,7 +1375,7 @@ async function renderLiveClasses() {
 
     const liveRes = await SupabaseDB.getLiveClasses(null, null, enrolledCourseIds);
     const myClasses = liveRes.data || [];
-    const now = Date.now();
+    const now = TimerManager.getTime();
 
     content.innerHTML = `
       <div class="card">
@@ -1749,7 +1751,7 @@ async function renderQuizzes(openId = null) {
     const subs = (allSubs || []).filter(s => enrolledCourseIds.includes(s.quizzes?.course_id));
 
     const activeQuizzes = (allQuizzes || []).filter(q => q.status === 'published');
-    const now = Date.now();
+    const now = TimerManager.getTime();
     container.innerHTML = `
       <div class="flex-between mb-20">
         <h2 class="m-0">My Quizzes</h2>
@@ -1874,7 +1876,7 @@ async function startQuiz(quizId) {
     const user = await SessionManager.getCurrentUser();
     const quiz = await SupabaseDB.getQuiz(quizId);
 
-    const now = Date.now();
+    const now = TimerManager.getTime();
     const startAt = quiz.start_at ? new Date(quiz.start_at).getTime() : 0;
     const endAt = quiz.end_at ? new Date(quiz.end_at).getTime() : Infinity;
 
@@ -1967,7 +1969,7 @@ async function startQuiz(quizId) {
         actualDeadline = Math.min(limitEnd, endAt);
 
         // Immediate check for expired resume
-        if (Date.now() >= actualDeadline) {
+        if (TimerManager.getTime() >= actualDeadline) {
             UI.showNotification('This attempt has already reached its time limit. Submitting...', 'warn');
             await submitQuiz(true);
             return;
@@ -1979,7 +1981,7 @@ async function startQuiz(quizId) {
     if (actualDeadline !== Infinity) {
       quizTimer = Countdown.create('#quizTimerDisplay', {
           targetDate: actualDeadline,
-          startTime: startTs,
+          referenceDate: startTs,
           showProgress: true,
           compact: true,
           label: 'Time:',

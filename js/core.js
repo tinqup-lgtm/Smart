@@ -6,24 +6,32 @@ window.isAccountLocked = function(user) {
 window.isActiveMaintenance = function(m) {
     if (!m) return false;
     if (m.enabled) return true; // Master manual override
-    const now = new Date().getTime();
+    const now = TimerManager.getTime();
     const schedules = Array.isArray(m.schedules) ? m.schedules : [];
-    return schedules.some(s => now >= new Date(s.startAt).getTime() && now <= new Date(s.endAt).getTime());
+    return schedules.some(s => {
+        const start = new Date(s.startAt).getTime();
+        const end = new Date(s.endAt).getTime();
+        return now >= start && now <= end;
+    });
 };
 
 window.getUpcomingMaintenance = function(m) {
-    const now = new Date().getTime();
+    const now = TimerManager.getTime();
     const schedules = (Array.isArray(m.schedules) ? m.schedules : []).filter(s => new Date(s.startAt).getTime() > now).sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
     return schedules[0] || null;
 };
 
 window.getActiveMaintenanceEnd = function(m) {
-    const now = new Date().getTime();
+    const now = TimerManager.getTime();
     if (m && m.manual_until) {
         const end = new Date(m.manual_until).getTime();
         if (now < end) return end;
     }
-    const s = (Array.isArray(m.schedules) ? m.schedules : []).find(s => now >= new Date(s.startAt).getTime() && now <= new Date(s.endAt).getTime());
+    const s = (Array.isArray(m.schedules) ? m.schedules : []).find(s => {
+        const start = new Date(s.startAt).getTime();
+        const end = new Date(s.endAt).getTime();
+        return now >= start && now <= end;
+    });
     return s ? new Date(s.endAt).getTime() : null;
 };
 
@@ -1284,49 +1292,56 @@ const SessionGuard = {
 };
 
 async function updateMaintBanner() {
-    // Integrate session validation into the banner update polling
     await SessionGuard.validate();
 
     let m;
     try {
-        m = await SupabaseDB.getMaintenance(false); // Use cache here for banner as SessionGuard already bypassed it
+        m = await SupabaseDB.getMaintenance(false);
     } catch (e) {
         console.warn('Maintenance check failed:', e);
         return;
     }
 
     const ids = ['maintBanner', 'maintBannerSignup', 'maintBannerLogin', 'maintBannerReset'];
+    const now = TimerManager.getTime();
+    const schedules = Array.isArray(m.schedules) ? m.schedules : [];
     
-    let targetDate = null;
-    let labelPrefix = '';
+    // Convert maintenance schedules to Countdown-compatible schedules
+    const countdownSchedules = schedules.map(s => ({
+        startDate: s.startAt,
+        targetDate: s.endAt,
+        label: 'Upcoming maintenance starts in',
+        upcomingLabel: 'Upcoming maintenance starts in',
+        activeLabel: 'System maintenance ACTIVE — restores in'
+    }));
 
-    if (isActiveMaintenance(m)) {
-        targetDate = getActiveMaintenanceEnd(m);
-        labelPrefix = 'System maintenance ACTIVE — ' + (targetDate ? 'restores in ' : 'please check back later');
-    } else {
-        const up = getUpcomingMaintenance(m);
-        if (up) {
-            targetDate = new Date(up.startAt).getTime();
-            labelPrefix = 'Upcoming system maintenance — starts in ';
-        }
+    // Handle Manual Override
+    if (m.enabled || (m.manual_until && new Date(m.manual_until).getTime() > now)) {
+        const manualEnd = m.manual_until ? new Date(m.manual_until).getTime() : null;
+        countdownSchedules.unshift({
+            startDate: now,
+            targetDate: manualEnd || (now + 3600000), // Default 1hr if no end
+            label: 'System maintenance ACTIVE',
+            activeLabel: manualEnd ? 'System maintenance ACTIVE — restores in' : 'System maintenance ACTIVE — check back later'
+        });
     }
 
-    if (isActiveMaintenance(m) || targetDate) {
+    if (countdownSchedules.length > 0) {
         if (!maintCountdown) {
             maintCountdown = new Countdown({
-                targetDate: targetDate,
+                schedules: countdownSchedules,
                 headless: true,
                 onEnd: () => {
                     maintCountdown = null;
                     updateMaintBanner();
                 },
-                onTick: (time) => {
-                    let displayStr = labelPrefix;
-                    if (targetDate) {
-                        const h = Math.floor(time.total / 3600000);
-                        const mm = Math.floor((time.total % 3600000) / 60000);
-                        const ss = Math.floor((time.total % 60000) / 1000);
-                        displayStr += `${h}h ${mm}m ${ss}s (at ${new Date(targetDate).toLocaleString()})`;
+                onTick: (state) => {
+                    let displayStr = state.label;
+                    if (state.phase !== 'ended' && state.total > 0) {
+                        const h = Math.floor(state.total / 3600000);
+                        const mm = Math.floor((state.total % 3600000) / 60000);
+                        const ss = Math.floor((state.total % 60000) / 1000);
+                        displayStr += ` ${h}h ${mm}m ${ss}s`;
                     }
 
                     ids.forEach(id => {
@@ -1338,15 +1353,10 @@ async function updateMaintBanner() {
                     });
                 }
             });
-        } else {
-            maintCountdown.setTargetDate(targetDate);
-        }
-
-        // Ensure it is "mounted" (subscribed to TimerManager)
-        if (!maintCountdown.mounted) {
             maintCountdown.mount();
+        } else {
+            maintCountdown.setOptions({ schedules: countdownSchedules });
         }
-        maintCountdown.update();
     } else {
         ids.forEach(id => {
             const b = document.getElementById(id);

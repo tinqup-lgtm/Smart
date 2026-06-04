@@ -472,6 +472,7 @@ async function renderAssignments() {
 
   try {
     const user = await SessionManager.getCurrentUser();
+    const now = TimerManager.getTime();
     const [{ data: assignments }, { data: courses }] = await Promise.all([
       SupabaseDB.getAssignments(user.email, null, null),
       SupabaseDB.getCourses(user.email, null)
@@ -492,10 +493,10 @@ async function renderAssignments() {
           <div class="small">${UI.renderRichText(a.description)}</div>
           <div class="mt-10">
             <p class="small m-0 mb-5">Due: ${new Date(a.due_date).toLocaleString()}</p>
-            ${new Date(a.due_date) > new Date() ? `
+            ${new Date(a.due_date).getTime() > now ? `
                 <div class="assign-countdown"
                      data-target="${new Date(a.due_date).getTime()}"
-                     data-start="${a.start_at || (a.created_at ? new Date(a.created_at).getTime() : Date.now())}"
+                     data-start="${a.start_at || (a.created_at ? new Date(a.created_at).getTime() : now)}"
                      data-status="${a.status || 'published'}"></div>
             ` : '<div class="danger-text bold tiny">Past Due</div>'}
           </div>
@@ -1553,6 +1554,7 @@ async function renderLiveClasses() {
 
   try {
     const user = await SessionManager.getCurrentUser();
+    const now = TimerManager.getTime();
     const [{ data: liveClasses }, { data: courses }] = await Promise.all([
       SupabaseDB.getLiveClasses(null, user.email, null),
       SupabaseDB.getCourses(user.email, null)
@@ -1601,7 +1603,7 @@ async function renderLiveClasses() {
                   ${isUpcoming ? `
                     <div class="live-sch-countdown" data-target="${startAt}" data-start="${liveClass.created_at ? new Date(liveClass.created_at).getTime() : now}" data-label="Starts In:" data-status="${liveClass.status === 'cancelled' ? 'draft' : 'published'}"></div>
                   ` : isLive ? `
-                    <div class="live-sch-countdown" data-target="${endAt}" data-start="${startAt}" data-label="Ends In:" data-status="${liveClass.status === 'cancelled' ? 'draft' : 'published'}"></div>
+                    <div class="live-sch-countdown" data-target="${endAt}" data-reference="${startAt}" data-label="Ends In:" data-status="${liveClass.status === 'cancelled' ? 'draft' : 'published'}"></div>
                   ` : `
                     <div class="tiny text-muted">Session Finished</div>
                     ${liveClass.recording_url ? `<div class="mt-5"><a href="${escapeAttr(liveClass.recording_url)}" target="_blank" class="button secondary tiny w-auto">View Recording</a></div>` : ''}
@@ -1781,6 +1783,7 @@ function startLiveClassTimer(id, endAt) {
 
     liveClassTimer = Countdown.create(null, {
         targetDate: endTime,
+        referenceDate: liveClassTimer?.referenceDate || TimerManager.getTime(),
         headless: true,
         onEnd: () => {
             if (confirm('Scheduled class time has reached. Do you want to extend by 15 minutes? Press Cancel to end class.')) {
@@ -2092,11 +2095,11 @@ async function renderQuizzes() {
 
   try {
     const user = await SessionManager.getCurrentUser();
+    const now = TimerManager.getTime();
     const [{ data: quizzes }, { data: courses }] = await Promise.all([
       SupabaseDB.getQuizzes(null, user.email, null),
       SupabaseDB.getCourses(user.email, null)
     ]);
-    const now = Date.now();
     container.innerHTML = `
     <div class="card flex-between">
       <h2 class="m-0">Quizzes</h2>
@@ -2117,7 +2120,7 @@ async function renderQuizzes() {
                 ${q.start_at && new Date(q.start_at).getTime() > now ? `
                     <div class="quiz-sch-countdown" data-target="${new Date(q.start_at).getTime()}" data-start="${q.created_at ? new Date(q.created_at).getTime() : now}" data-label="Starts In:" data-status="${q.status || 'published'}"></div>
                 ` : q.end_at && new Date(q.end_at).getTime() > now ? `
-                    <div class="quiz-sch-countdown" data-target="${new Date(q.end_at).getTime()}" data-start="${q.start_at || (q.created_at ? new Date(q.created_at).getTime() : now)}" data-label="Ends In:" data-status="${q.status || 'published'}"></div>
+                    <div class="quiz-sch-countdown" data-target="${new Date(q.end_at).getTime()}" data-reference="${q.start_at || (q.created_at ? new Date(q.created_at).getTime() : now)}" data-label="Ends In:" data-status="${q.status || 'published'}"></div>
                 ` : q.end_at ? '<div class="tiny danger-text bold">Expired</div>' : ''}
             </div>
           ` : ''}
