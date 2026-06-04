@@ -553,6 +553,18 @@ input:checked + .ac-slider:before {
     flex-direction: column;
     align-items: center;
 }
+
+.countdown-draft {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 4px 10px;
+    background: #f1f5f9;
+    color: #64748b;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    border: 1px dashed #cbd5e1;
+}
 .help-page-layout {
     display: grid;
     grid-template-columns: 1fr 350px;

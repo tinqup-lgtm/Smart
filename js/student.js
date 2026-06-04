@@ -417,7 +417,7 @@ async function renderAssignments(openId = null){
       statusHtml = `<span class="badge badge-inactive">OVERDUE</span>`;
     } else if (isUpcoming) {
       const createdAtTs = a.created_at ? new Date(a.created_at).getTime() : now;
-      statusHtml = `<div class="assign-open-countdown" data-target="${startAt}" data-start="${createdAtTs}"></div>`;
+      statusHtml = `<div class="assign-open-countdown" data-target="${startAt}" data-start="${createdAtTs}" data-status="${a.status || 'published'}"></div>`;
     } else {
       statusHtml = `<span class="badge" style="background:#edf2f7; color:#4a5568">PENDING</span>`;
     }
@@ -432,7 +432,7 @@ async function renderAssignments(openId = null){
       <td>
         <div class="${isOverdue ? 'danger-text' : ''}">${dueDate.toLocaleDateString()}</div>
         ${isOverdue ? '<div class="small danger-text">(Overdue)</div>' : ''}
-        ${!isOverdue && !submission && !isUpcoming ? `<div class="assign-due-countdown" data-target="${dueDate.getTime()}" data-start="${startAt || (a.created_at ? new Date(a.created_at).getTime() : now)}"></div>` : ''}
+        ${!isOverdue && !submission && !isUpcoming ? `<div class="assign-due-countdown" data-target="${dueDate.getTime()}" data-start="${startAt || (a.created_at ? new Date(a.created_at).getTime() : now)}" data-status="${a.status || 'published'}"></div>` : ''}
       </td>
       <td>${statusHtml}</td>
       <td>${submission?.grade !== undefined && submission?.grade !== null ? `
@@ -456,37 +456,23 @@ async function renderAssignments(openId = null){
     });
 
   // Initialize countdowns
-  document.querySelectorAll('.assign-open-countdown').forEach(el => {
-      const target = parseInt(el.dataset.target);
-      const start = el.dataset.start;
-      const c = Countdown.create(el, {
-          targetDate: target,
-          startTime: start,
-          showProgress: true,
-          compact: true,
-          label: 'Opens in:',
-          onEnd: () => renderAssignments()
-      });
-      activeCountdowns.push(c);
-  });
+  Countdown.createAll('.assign-open-countdown', {
+      showProgress: true,
+      compact: true,
+      label: 'Opens in:',
+      onEnd: () => renderAssignments()
+  }).forEach(c => activeCountdowns.push(c));
 
-  document.querySelectorAll('.assign-due-countdown').forEach(el => {
-      const target = parseInt(el.dataset.target);
-      const start = el.dataset.start;
-      const c = Countdown.create(el, {
-          targetDate: target,
-          startTime: start,
-          showProgress: true,
-          compact: true,
-          label: 'Due in:',
-          onEnd: () => {
-              if (!document.getElementById('assignmentForm') || document.getElementById('assignmentForm').classList.contains('hidden')) {
-                  renderAssignments();
-              }
+  Countdown.createAll('.assign-due-countdown', {
+      showProgress: true,
+      compact: true,
+      label: 'Due in:',
+      onEnd: () => {
+          if (!document.getElementById('assignmentForm') || document.getElementById('assignmentForm').classList.contains('hidden')) {
+              renderAssignments();
           }
-      });
-      activeCountdowns.push(c);
-  });
+      }
+  }).forEach(c => activeCountdowns.push(c));
 
   if (openId) {
       showAssignmentForm(openId);
@@ -773,7 +759,7 @@ async function renderDashboardOverview() {
                 <div style="flex: 1">
                   <div class="bold">${escapeHtml(a.title)}</div>
                   <div class="tiny text-muted mb-5">Due: ${new Date(a.due_date).toLocaleDateString()}</div>
-                  <div class="dashboard-assign-countdown" data-target="${new Date(a.due_date).getTime()}" data-start="${a.start_at || (a.created_at ? new Date(a.created_at).getTime() : Date.now())}"></div>
+                  <div class="dashboard-assign-countdown" data-target="${new Date(a.due_date).getTime()}" data-start="${a.start_at || (a.created_at ? new Date(a.created_at).getTime() : Date.now())}" data-status="${a.status || 'published'}"></div>
                 </div>
                 <button class="button small w-auto mt-10" style="width: 80px" onclick="renderAssignments('${a.id}')">Submit</button>
               </div>
@@ -784,19 +770,12 @@ async function renderDashboardOverview() {
       </div>
     `;
 
-    document.querySelectorAll('.dashboard-assign-countdown').forEach(el => {
-        const target = parseInt(el.dataset.target);
-        const start = el.dataset.start;
-        const c = Countdown.create(el, {
-            targetDate: target,
-            startTime: start,
-            showProgress: true,
-            compact: true,
-            label: 'Due in:',
-            onEnd: () => renderDashboardOverview()
-        });
-        activeCountdowns.push(c);
-    });
+    Countdown.createAll('.dashboard-assign-countdown', {
+        showProgress: true,
+        compact: true,
+        label: 'Due in:',
+        onEnd: () => renderDashboardOverview()
+    }).forEach(c => activeCountdowns.push(c));
   } catch (error) {
     console.error('Dashboard error:', error);
     container.innerHTML = `<div class="stat-card danger">
@@ -1422,7 +1401,7 @@ async function renderLiveClasses() {
                   `<button class="button w-auto" onclick="handleJoinLiveClass('${liveClass.id}', '${liveClass.room_name}', '${escapeAttr(liveClass.meeting_url || '')}')">Join Now</button>` :
                   isUpcoming ? `
                     <div class="mb-10 p-10 border-radius-sm" style="background:var(--bg); border:1px solid var(--border)">
-                        <div class="live-countdown" data-target="${startAt}" data-start="${createdAtTs}"></div>
+                        <div class="live-countdown" data-target="${startAt}" data-start="${createdAtTs}" data-status="${liveClass.status === 'cancelled' ? 'draft' : 'published'}"></div>
                     </div>
                     <button class="button secondary w-auto mt-10" disabled>Not Started</button>
                   ` : `
@@ -1441,18 +1420,11 @@ async function renderLiveClasses() {
       <div id="jitsi-container" class="hidden mt-20" style="height:600px; border:1px solid var(--border); border-radius:8px; overflow:hidden; position:relative"></div>
     `;
 
-    document.querySelectorAll('.live-countdown').forEach(el => {
-        const target = parseInt(el.dataset.target);
-        const start = el.dataset.start;
-        const c = Countdown.create(el, {
-            targetDate: target,
-            startTime: start,
-            showProgress: true,
-            label: 'Starts in:',
-            onEnd: () => renderLiveClasses()
-        });
-        activeCountdowns.push(c);
-    });
+    Countdown.createAll('.live-countdown', {
+        showProgress: true,
+        label: 'Starts in:',
+        onEnd: () => renderLiveClasses()
+    }).forEach(c => activeCountdowns.push(c));
 
   } catch (error) {
     console.error('Live Classes error:', error);
@@ -1832,14 +1804,14 @@ async function renderQuizzes(openId = null) {
               <div class="mt-20" id="quiz-actions-${q.id}">
                   ${isUpcoming ? `
                       <div class="p-10 border-radius-sm" style="background:var(--bg); border:1px solid var(--border)">
-                          <div class="quiz-countdown" data-target="${startAt}" data-start="${q.created_at ? new Date(q.created_at).getTime() : now}" data-label="Available In:"></div>
+                          <div class="quiz-countdown" data-target="${startAt}" data-start="${q.created_at ? new Date(q.created_at).getTime() : now}" data-label="Available In:" data-status="${q.status || 'published'}"></div>
                       </div>
                   ` : isExpired ? `
                       <div class="badge badge-inactive w-100 text-center">Quiz Ended on ${new Date(endAt).toLocaleString()}</div>
                   ` : canAttempt ? `
                       ${endAt !== Infinity ? `
                           <div class="mb-10 p-10 border-radius-sm" style="background:#fffcf0; border:1px solid #ffeeba">
-                              <div class="quiz-countdown" data-target="${endAt}" data-start="${startAt}" data-label="Ends In:"></div>
+                              <div class="quiz-countdown" data-target="${endAt}" data-start="${startAt}" data-label="Ends In:" data-status="${q.status || 'published'}"></div>
                           </div>
                       ` : ''}
                       <button class="button w-auto small px-20" id="quiz-btn-${q.id}" onclick="startQuiz('${q.id}')">${inProgress ? 'Resume Attempt' : 'Start New Attempt'}</button>
@@ -1854,23 +1826,14 @@ async function renderQuizzes(openId = null) {
     `;
 
     // Initialize countdowns
-    document.querySelectorAll('.quiz-countdown').forEach(el => {
-        const target = parseInt(el.dataset.target);
-        const start = el.dataset.start;
-        const label = el.dataset.label;
-        const c = Countdown.create(el, {
-            targetDate: target,
-            startTime: start,
-            showProgress: true,
-            label: label,
-            onEnd: () => {
-                if (!document.getElementById('quizForm')) {
-                    renderQuizzes();
-                }
+    Countdown.createAll('.quiz-countdown', {
+        showProgress: true,
+        onEnd: () => {
+            if (!document.getElementById('quizForm')) {
+                renderQuizzes();
             }
-        });
-        activeCountdowns.push(c);
-    });
+        }
+    }).forEach(c => activeCountdowns.push(c));
 
     if (openId) {
         startQuiz(openId);

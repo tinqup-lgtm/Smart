@@ -146,6 +146,7 @@
             this.endLabel = options.endLabel !== undefined ? options.endLabel : 'Ended';
             this.upcomingLabel = options.upcomingLabel || 'Starts in';
             this.label = options.label || '';
+            this.status = options.status || 'published';
             this.headless = options.headless === true;
             this.onTick = options.onTick || null;
 
@@ -168,15 +169,23 @@
         _parse(d) {
             if (d === null || d === undefined || d === '') return null;
             // Handle numeric strings (timestamps)
-            if (typeof d === 'string' && /^\d+$/.test(d)) return parseInt(d);
-            if (typeof d === 'number') return d;
-            const ts = new Date(d).getTime();
-            return isNaN(ts) ? null : ts;
+            if (typeof d === 'string' && /^\d+$/.test(d)) {
+                const val = parseInt(d);
+                return isNaN(val) ? null : val;
+            }
+            if (typeof d === 'number') return isNaN(d) ? null : d;
+
+            try {
+                const ts = new Date(d).getTime();
+                return isNaN(ts) ? null : ts;
+            } catch (e) {
+                return null;
+            }
         }
 
         parseTargetDate() {
             const ts = this._parse(this.targetDate);
-            if (!ts && this.targetDate !== null) {
+            if (!ts && this.targetDate !== null && this.targetDate !== undefined && this.targetDate !== '') {
                 console.warn(`Countdown: Invalid targetDate provided: ${this.targetDate}`);
                 return null;
             }
@@ -264,6 +273,22 @@
         // Update the display
         update() {
             if (!this.mounted) return;
+
+            // Handle Draft Status
+            if (this.status === 'draft') {
+                if (this.container) {
+                    this.container.innerHTML = `
+                        <div class="countdown-wrapper">
+                            ${this.label ? `<div class="countdown-label small bold mb-5">${escapeHtml(this.label)}</div>` : ''}
+                            <div class="countdown-draft ${this.className}">
+                                ${this.showIcon ? Icons.Clock(this.compact ? 12 : 14) : ''}
+                                <span class="countdown-label uppercase bold">Draft</span>
+                            </div>
+                        </div>
+                    `;
+                }
+                return;
+            }
 
             const now = TimerManager.getTime();
 
@@ -456,6 +481,7 @@
             this.targetDate = newDate;
             this.targetTimestamp = this.parseTargetDate();
             this.hasEndedCalled = false;
+            this.hasStartedCalled = false;
             if (this.mounted) {
                 this.update();
             }
@@ -490,30 +516,35 @@
     // ============================================
     // STATIC HELPER: Create countdown instances
     // ============================================
-    Countdown.create = function(selector, options) {
+    Countdown.create = function(selector, options = {}) {
         const el = typeof selector === 'string' ? document.querySelector(selector) : selector;
+        if (!el) return null;
 
-        if (el && CountdownRegistry.has(el)) {
+        if (CountdownRegistry.has(el)) {
             CountdownRegistry.get(el).destroy();
         }
 
-        const instance = new Countdown({ ...options, selector: el });
-        if (el) {
-            CountdownRegistry.set(el, instance);
-        }
+        // Merge options with data attributes for redundancy reduction
+        const ds = el.dataset;
+        const mergedOptions = {
+            targetDate: options.targetDate || ds.target,
+            startTime: options.startTime || ds.start,
+            startAt: options.startAt || ds.startAt,
+            label: options.label || ds.label,
+            status: options.status || ds.status,
+            upcomingLabel: options.upcomingLabel || ds.upcomingLabel,
+            endLabel: options.endLabel !== undefined ? options.endLabel : ds.endLabel,
+            ...options
+        };
+
+        const instance = new Countdown({ ...mergedOptions, selector: el });
+        CountdownRegistry.set(el, instance);
         return instance;
     };
 
     Countdown.createAll = function(selector, options) {
         const elements = document.querySelectorAll(selector);
-        return Array.from(elements).map(el => {
-            if (CountdownRegistry.has(el)) {
-                CountdownRegistry.get(el).destroy();
-            }
-            const instance = new Countdown({ ...options, selector: el });
-            CountdownRegistry.set(el, instance);
-            return instance;
-        });
+        return Array.from(elements).map(el => Countdown.create(el, options));
     };
 
     // ============================================
