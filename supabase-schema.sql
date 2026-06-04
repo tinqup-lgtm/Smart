@@ -1930,7 +1930,10 @@ CREATE OR REPLACE FUNCTION purge_expired_records()
 RETURNS TRIGGER AS $$
 BEGIN
     DELETE FROM broadcasts WHERE expires_at < NOW();
-    DELETE FROM notifications WHERE created_at < (NOW() - INTERVAL '60 days') AND is_read = TRUE;
+    -- Hard limit: Delete all notifications older than 90 days
+    DELETE FROM notifications WHERE created_at < (NOW() - INTERVAL '90 days');
+    -- Soft limit: Delete read notifications older than 30 days
+    DELETE FROM notifications WHERE created_at < (NOW() - INTERVAL '30 days') AND is_read = TRUE;
     DELETE FROM violations WHERE expires_at < NOW();
 
     -- Automatically clear expired password reset requests (24h window)
