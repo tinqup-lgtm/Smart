@@ -493,7 +493,10 @@ async function renderAssignments() {
           <div class="mt-10">
             <p class="small m-0 mb-5">Due: ${new Date(a.due_date).toLocaleString()}</p>
             ${new Date(a.due_date) > new Date() ? `
-                <div class="assign-countdown" data-target="${new Date(a.due_date).getTime()}" data-start="${a.start_at || (a.created_at ? new Date(a.created_at).getTime() : Date.now())}"></div>
+                <div class="assign-countdown"
+                     data-target="${new Date(a.due_date).getTime()}"
+                     data-start="${a.start_at || (a.created_at ? new Date(a.created_at).getTime() : Date.now())}"
+                     data-status="${a.status || 'published'}"></div>
             ` : '<div class="danger-text bold tiny">Past Due</div>'}
           </div>
           <div class="flex gap-10 mt-15">
@@ -505,19 +508,12 @@ async function renderAssignments() {
       </div>
     `;
 
-    document.querySelectorAll('.assign-countdown').forEach(el => {
-        const target = parseInt(el.dataset.target);
-        const start = el.dataset.start;
-        const c = Countdown.create(el, {
-            targetDate: target,
-            startTime: start,
-            showProgress: true,
-            compact: true,
-            label: 'Expires in:',
-            onEnd: () => renderAssignments()
-        });
-        activeCountdowns.push(c);
-    });
+    Countdown.createAll('.assign-countdown', {
+        showProgress: true,
+        compact: true,
+        label: 'Expires in:',
+        onEnd: () => renderAssignments()
+    }).forEach(c => activeCountdowns.push(c));
 
   } catch (error) {
     console.error('Assignments error:', error);
@@ -1603,9 +1599,9 @@ async function renderLiveClasses() {
               </div>
               <div class="mt-10 mb-10 p-10 border-radius-sm" style="background:var(--bg)">
                   ${isUpcoming ? `
-                    <div class="live-sch-countdown" data-target="${startAt}" data-start="${liveClass.created_at ? new Date(liveClass.created_at).getTime() : now}" data-label="Starts In:"></div>
+                    <div class="live-sch-countdown" data-target="${startAt}" data-start="${liveClass.created_at ? new Date(liveClass.created_at).getTime() : now}" data-label="Starts In:" data-status="${liveClass.status === 'cancelled' ? 'draft' : 'published'}"></div>
                   ` : isLive ? `
-                    <div class="live-sch-countdown" data-target="${endAt}" data-start="${startAt}" data-label="Ends In:"></div>
+                    <div class="live-sch-countdown" data-target="${endAt}" data-start="${startAt}" data-label="Ends In:" data-status="${liveClass.status === 'cancelled' ? 'draft' : 'published'}"></div>
                   ` : `
                     <div class="tiny text-muted">Session Finished</div>
                     ${liveClass.recording_url ? `<div class="mt-5"><a href="${escapeAttr(liveClass.recording_url)}" target="_blank" class="button secondary tiny w-auto">View Recording</a></div>` : ''}
@@ -1627,19 +1623,10 @@ async function renderLiveClasses() {
       <div id="jitsi-container" class="hidden mt-20" style="height:600px; border:1px solid var(--border); border-radius:8px; overflow:hidden"></div>
     `;
 
-    document.querySelectorAll('.live-sch-countdown').forEach(el => {
-        const target = parseInt(el.dataset.target);
-        const start = el.dataset.start;
-        const label = el.dataset.label;
-        const c = Countdown.create(el, {
-            targetDate: target,
-            startTime: start,
-            showProgress: true,
-            label: label,
-            onEnd: () => renderLiveClasses()
-        });
-        activeCountdowns.push(c);
-    });
+    Countdown.createAll('.live-sch-countdown', {
+        showProgress: true,
+        onEnd: () => renderLiveClasses()
+    }).forEach(c => activeCountdowns.push(c));
 
   } catch (error) {
     console.error('Live Classes error:', error);
@@ -2128,9 +2115,9 @@ async function renderQuizzes() {
           ${q.start_at || q.end_at ? `
             <div class="mt-10 mb-10 p-10 border-radius-sm" style="background:var(--bg)">
                 ${q.start_at && new Date(q.start_at).getTime() > now ? `
-                    <div class="quiz-sch-countdown" data-target="${new Date(q.start_at).getTime()}" data-start="${q.created_at ? new Date(q.created_at).getTime() : now}" data-label="Starts In:"></div>
+                    <div class="quiz-sch-countdown" data-target="${new Date(q.start_at).getTime()}" data-start="${q.created_at ? new Date(q.created_at).getTime() : now}" data-label="Starts In:" data-status="${q.status || 'published'}"></div>
                 ` : q.end_at && new Date(q.end_at).getTime() > now ? `
-                    <div class="quiz-sch-countdown" data-target="${new Date(q.end_at).getTime()}" data-start="${q.start_at || (q.created_at ? new Date(q.created_at).getTime() : now)}" data-label="Ends In:"></div>
+                    <div class="quiz-sch-countdown" data-target="${new Date(q.end_at).getTime()}" data-start="${q.start_at || (q.created_at ? new Date(q.created_at).getTime() : now)}" data-label="Ends In:" data-status="${q.status || 'published'}"></div>
                 ` : q.end_at ? '<div class="tiny danger-text bold">Expired</div>' : ''}
             </div>
           ` : ''}
@@ -2144,19 +2131,10 @@ async function renderQuizzes() {
       </div>
     `;
 
-    document.querySelectorAll('.quiz-sch-countdown').forEach(el => {
-        const target = parseInt(el.dataset.target);
-        const start = el.dataset.start;
-        const label = el.dataset.label;
-        const c = Countdown.create(el, {
-            targetDate: target,
-            startTime: start,
-            showProgress: true,
-            label: label,
-            onEnd: () => renderQuizzes()
-        });
-        activeCountdowns.push(c);
-    });
+    Countdown.createAll('.quiz-sch-countdown', {
+        showProgress: true,
+        onEnd: () => renderQuizzes()
+    }).forEach(c => activeCountdowns.push(c));
 
   } catch (error) {
     console.error('Quizzes error:', error);
