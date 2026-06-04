@@ -718,7 +718,7 @@ async function viewFeedback(assignmentId) {
 
 async function renderDashboardOverview() {
 
-  NotificationManager.initPolling();
+  NotificationManager.init();
   clearActiveCountdowns();
   const container = document.getElementById('pageContent');
   if (!container) return;
@@ -2606,6 +2606,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const user = await initDashboard('student');
   if (user) {
     initNav();
+    NotificationManager.init();
     NotificationManager.initRealtimeSubscriptions(user.email, 'student', () => {
         if (!currentQuiz) renderQuizzes();
     });

@@ -806,10 +806,15 @@ const NotificationManager = {
                 metadata: { ...metadata, read_broadcasts: readBroadcasts }
             });
 
-            this.queueUpdate(true);
+            // Sync other tabs
+            if (this._channel) {
+                this._channel.postMessage({ type: 'STATE_CHANGED', action: 'MARK_ALL_READ' });
+            }
+
+            this.queueUpdate(false);
             UI.showNotification('All notifications marked as read', 'success');
         } catch (e) {
-            console.error('Failed to mark all as read:', e);
+            console.error('[NotificationManager] Failed to mark all as read:', e);
         }
     },
 
@@ -833,10 +838,16 @@ const NotificationManager = {
             });
 
             await SupabaseDB.deleteNotifications(user.email);
-            this.queueUpdate(true);
+
+            // Sync other tabs
+            if (this._channel) {
+                this._channel.postMessage({ type: 'STATE_CHANGED', action: 'CLEAR_ALL' });
+            }
+
+            this.queueUpdate(false);
             UI.showNotification('Notifications cleared', 'info');
         } catch (e) {
-            console.error('Failed to clear notifications:', e);
+            console.error('[NotificationManager] Failed to clear notifications:', e);
             UI.showNotification('Error clearing notifications', 'error');
         }
     },
@@ -941,39 +952,58 @@ const NotificationManager = {
     },
 
     async handleNotificationClick(id, isBroadcast, link) {
-        if (isBroadcast) {
-            await this.markBroadcastRead(id);
-        } else {
-            try {
+        // 1. Mark as read immediately in UI for responsive feel
+        const notifItem = document.querySelector(`.notif-item[onclick*="${id}"]`);
+        if (notifItem) {
+            notifItem.style.background = '#fff';
+            const dot = notifItem.querySelector('div[style*="border-radius:50%"]');
+            if (dot) dot.remove();
+        }
+
+        // 2. Persist read state
+        try {
+            if (isBroadcast) {
+                await this.markBroadcastRead(id);
+            } else {
                 const user = await SessionManager.getCurrentUser();
                 if (user) {
                     await SupabaseDB.markNotificationsAsRead(user.email, id);
                     this.queueUpdate(true);
                 }
-            } catch (e) {
-                console.warn('Failed to mark notification as read:', e);
             }
+        } catch (e) {
+            console.warn('[NotificationManager] Failed to mark as read:', e);
         }
+
+        // 3. Handle Navigation
         if (link) {
-            // Internal deep linking support
-            if (link.startsWith('student.html') || link.startsWith('teacher.html') || link.startsWith('admin.html')) {
+            try {
                 const url = new URL(link, window.location.origin);
                 const page = url.searchParams.get('page');
 
-                // If we are already on the same dashboard, use internal navigation
-                const currentDashboard = window.location.pathname.split('/').pop();
-                const targetDashboard = link.split('?')[0];
+                const currentPath = window.location.pathname.split('/').pop() || 'index.html';
+                const targetPath = url.pathname.split('/').pop();
 
-                if (currentDashboard === targetDashboard && page) {
+                // If we are already on the same dashboard, use internal navigation to avoid full reload
+                if (currentPath === targetPath && page) {
                     const navBtn = document.querySelector(`nav button[data-page="${page}"]`);
                     if (navBtn) {
-                        navBtn.click();
+                        // Update URL without reload to support browser back button
+                        window.history.pushState({}, '', link);
+
                         // Close notification list
                         document.getElementById('notifList')?.classList.remove('active');
+
+                        // Trigger dashboard internal navigation
+                        navBtn.click();
                         return;
                     }
                 }
+            } catch (err) {
+                console.warn('[NotificationManager] Navigation error, falling back to full reload:', err);
             }
+
+            // Fallback: Full page reload
             window.location.href = link;
         }
     },
@@ -1071,20 +1101,21 @@ const NotificationManager = {
         }
     },
 
-    initPolling() {
-        // Polling is now legacy; the system is event-driven via Realtime.
-        // We maintain this for initial setup and tab synchronization.
+    /**
+     * Initializes the notification manager, setting up cross-tab communication
+     * and global event listeners for the UI.
+     */
+    init() {
         if (this._initialized) return;
         this._initialized = true;
 
         if (this._channel) {
             this._channel.onmessage = (event) => {
                 if (event.data) {
-                    if (event.data.type === 'UPDATE_UI') {
+                    if (event.data.type === 'UPDATE_UI' || event.data.type === 'STATE_CHANGED') {
                         if (typeof SupabaseDB !== 'undefined') SupabaseDB.invalidateCache();
                         this.queueUpdate(false);
                     } else if (event.data.type === 'ALERT_SHOWN') {
-                        // Silent update to local cache of alerted IDs if needed, or just refresh
                         if (typeof SupabaseDB !== 'undefined') SupabaseDB.invalidateCache();
                     }
                 }

@@ -1230,6 +1230,28 @@ class SupabaseDB {
         if (error) throw error;
     }
 
+    /**
+     * Centralized broadcast creation via secure SQL RPC.
+     * Enforces business logic (role normalization, expiry) server-side.
+     */
+    static async createBroadcast(params) {
+        return this._request(async () => {
+            const { error } = await supabaseClient.rpc('create_broadcast', {
+                p_course_id: params.courseId || null,
+                p_target_role: params.targetRole || null,
+                p_title: params.title,
+                p_message: params.message,
+                p_link: params.link || null,
+                p_type: params.type || 'system',
+                p_expires_in: params.expiresInDays ? `${params.expiresInDays} days` : '30 days'
+            });
+            if (error) throw error;
+            _cache.invalidate('broadcasts_active');
+            return true;
+        });
+    }
+
+    /** @deprecated Use createBroadcast instead */
     static async saveBroadcast(broadcast) {
         const data = await this._upsert('broadcasts', broadcast);
         _cache.invalidate('broadcasts_active');
