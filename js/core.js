@@ -721,17 +721,35 @@ const NotificationManager = {
             recentDate.setDate(recentDate.getDate() - 14);
             const relevantBroadcasts = broadcasts.filter(b => new Date(b.created_at) >= recentDate);
 
-            // 4. Filter out cleared broadcasts (using metadata fallback to localStorage for migration)
-            const clearedMetadata = metadata.cleared_broadcasts || [];
+            // 4. Migration & Filtering of cleared/read broadcasts
             const clearedLocal = JSON.parse(localStorage.getItem(`cleared_broadcasts_${user.email}`) || '[]');
-            const clearedBroadcasts = [...new Set([...clearedMetadata, ...clearedLocal])];
+            const readLocal = JSON.parse(localStorage.getItem(`read_broadcasts_${user.email}`) || '[]');
 
+            if (clearedLocal.length > 0 || readLocal.length > 0) {
+                const updatedMetadata = { ...metadata };
+                if (clearedLocal.length > 0) {
+                    updatedMetadata.cleared_broadcasts = [...new Set([...(metadata.cleared_broadcasts || []), ...clearedLocal])];
+                }
+                if (readLocal.length > 0) {
+                    updatedMetadata.read_broadcasts = [...new Set([...(metadata.read_broadcasts || []), ...readLocal])];
+                }
+
+                // One-time migration: Push to server
+                await SupabaseDB.saveUser({ ...freshUser, metadata: updatedMetadata });
+
+                // Clear local only after successful server update
+                if (clearedLocal.length > 0) localStorage.removeItem(`cleared_broadcasts_${user.email}`);
+                if (readLocal.length > 0) localStorage.removeItem(`read_broadcasts_${user.email}`);
+
+                // Update local references for filtering below
+                metadata.cleared_broadcasts = updatedMetadata.cleared_broadcasts;
+                metadata.read_broadcasts = updatedMetadata.read_broadcasts;
+            }
+
+            const clearedBroadcasts = metadata.cleared_broadcasts || [];
             const activeBroadcasts = relevantBroadcasts.filter(b => !clearedBroadcasts.includes(b.id));
 
-            // 5. Mark broadcasts as "read" (using metadata fallback to localStorage)
-            const readMetadata = metadata.read_broadcasts || [];
-            const readLocal = JSON.parse(localStorage.getItem(`read_broadcasts_${user.email}`) || '[]');
-            const readBroadcasts = [...new Set([...readMetadata, ...readLocal])];
+            const readBroadcasts = metadata.read_broadcasts || [];
 
             const mappedBroadcasts = activeBroadcasts.map(b => ({
                 ...b,
@@ -836,7 +854,22 @@ const NotificationManager = {
         }
 
         const list = document.getElementById('notifList');
-        if (list) list.style.opacity = '0.7';
+        const badge = document.getElementById('unreadCount');
+
+        if (list) {
+            list.style.opacity = '0.7';
+            const header = list.querySelector('.notif-header');
+            if (header) {
+                let spinner = header.querySelector('.mini-spinner');
+                if (!spinner) {
+                    spinner = document.createElement('div');
+                    spinner.className = 'mini-spinner';
+                    spinner.innerHTML = '<div class="loading-spinner" style="width:14px; height:14px; border-width:2px"></div>';
+                    header.prepend(spinner);
+                }
+                spinner.style.display = 'block';
+            }
+        }
 
         try {
             const notifications = await this.fetchNotifications();
@@ -865,7 +898,7 @@ const NotificationManager = {
                 `).join('');
 
                 list.innerHTML = `
-                    <div style="padding:12px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; background:#fafafa; position:sticky; top:0; z-index:10">
+                    <div class="notif-header" style="padding:12px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; background:#fafafa; position:sticky; top:0; z-index:10">
                         <div class="flex-center-y gap-10">
                             <button class="button secondary tiny" style="width:24px; height:24px; padding:0; margin:0; display:flex; align-items:center; justify-content:center; border-radius:50%" onclick="document.getElementById('notifList').classList.remove('active'); event.stopPropagation();">✕</button>
                             <strong style="font-size:14px">Notifications</strong>
@@ -903,7 +936,11 @@ const NotificationManager = {
         } catch (e) {
             console.warn('Error updating notif list:', e);
         } finally {
-            if (list) list.style.opacity = '1';
+            if (list) {
+                list.style.opacity = '1';
+                const spinner = list.querySelector('.mini-spinner');
+                if (spinner) spinner.style.display = 'none';
+            }
             this._isUpdating = false;
         }
     },
