@@ -2298,8 +2298,11 @@ CREATE POLICY "Broadcasts: SELECT" ON broadcasts FOR SELECT USING (
   is_admin() OR
   teacher_email = get_auth_email() OR
   (
+    -- Role must match (or be 'all' / NULL)
     (target_role IS NULL OR target_role = get_auth_role()) AND (
+      -- Global broadcast
       course_id IS NULL OR
+      -- Course-specific broadcast: must be enrolled in a published course
       EXISTS (
         SELECT 1 FROM enrollments e
         JOIN courses c ON e.course_id = c.id
