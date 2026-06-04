@@ -608,20 +608,23 @@ async function broadcastNotif() {
   if (!vMsg.valid) return UI.showNotification(vMsg.message, 'warn');
 
   try {
-    // Utilize Edge Function Notification Engine for centralized delivery
-    await SupabaseDB.invokeFunction('notify', {
-        type: 'broadcast',
-        payload: {
-            title,
-            message: msg,
-            target_role: role,
-            expires_in: expiryDays
-        }
+    // Utilize centralized createBroadcast which leverages the secure SQL RPC
+    // to handle business logic (expiry, role normalization) server-side.
+    await SupabaseDB.createBroadcast({
+        title,
+        message: msg,
+        targetRole: role,
+        expiresInDays: expiryDays
     });
 
-    UI.showNotification(`Broadcast delivered to engine.`, 'success');
+    UI.showNotification(`Broadcast sent successfully.`, 'success');
     document.getElementById('bcTitle').value = '';
     document.getElementById('bcMsg').value = '';
+
+    // Refresh dashboard if visible to show local broadcast count update
+    if (document.querySelector('[data-page="dashboard"].active')) {
+        renderDashboard();
+    }
   } catch (e) { UI.showNotification('Broadcast failed: ' + e.message, 'error'); }
 }
 
@@ -2324,7 +2327,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const user = await initDashboard('admin');
   if (user) {
     initNav();
-    NotificationManager.initPolling();
+    NotificationManager.init();
     NotificationManager.initRealtimeSubscriptions(user.email, 'admin', () => {
         const activeEl = document.activeElement;
         const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
@@ -2335,11 +2338,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     renderDashboard();
     updateSidebarBadges();
-    setInterval(() => {
-        if (document.querySelector('[data-page="dashboard"].active')) {
-            updateSidebarBadges();
-        }
-    }, 60000);
+
     setInterval(updateMaintBanner, 30000);
     updateMaintBanner();
     const logoutBtn = document.getElementById('logoutBtn');

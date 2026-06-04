@@ -8,7 +8,7 @@ function clearActiveCountdowns() {
 
 async function renderDashboard() {
 
-  NotificationManager.initPolling();
+  NotificationManager.init();
   const content = document.getElementById('pageContent');
   if (!content) return;
   clearActiveCountdowns();
@@ -3025,6 +3025,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const user = await initDashboard('teacher');
   if (user) {
     initNav();
+    NotificationManager.init();
     NotificationManager.initRealtimeSubscriptions(user.email, 'teacher', () => {
         const activeEl = document.activeElement;
         const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');

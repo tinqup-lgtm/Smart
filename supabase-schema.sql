@@ -638,12 +638,20 @@ END $$;
 
 -- 4. Functional Triggers
 
-CREATE OR REPLACE FUNCTION fan_out_broadcast(n_course_id UUID, n_role VARCHAR, n_title TEXT, n_msg TEXT, n_link TEXT DEFAULT NULL, n_type TEXT DEFAULT 'system')
-RETURNS VOID AS $$
+CREATE OR REPLACE FUNCTION create_broadcast(
+    p_course_id UUID DEFAULT NULL,
+    p_target_role VARCHAR DEFAULT NULL,
+    p_title TEXT DEFAULT 'Notification',
+    p_message TEXT DEFAULT '',
+    p_link TEXT DEFAULT NULL,
+    p_type TEXT DEFAULT 'system',
+    p_expires_in INTERVAL DEFAULT INTERVAL '30 days'
+) RETURNS VOID AS $$
 BEGIN
-  -- We use broadcasts table for event-driven fan-out to prevent notification row bloat
+  -- Security: Only authorized roles or system triggers (SECURITY DEFINER) can create broadcasts
+  -- Note: p_target_role 'all' is normalized to NULL in the table
   INSERT INTO broadcasts (course_id, target_role, title, message, link, type, expires_at)
-  VALUES (n_course_id, NULLIF(n_role, 'all'), n_title, n_msg, n_link, n_type, NOW() + INTERVAL '30 days');
+  VALUES (p_course_id, NULLIF(p_target_role, 'all'), p_title, p_message, p_link, p_type, NOW() + p_expires_in);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -651,15 +659,15 @@ CREATE OR REPLACE FUNCTION tr_notify_live_class() RETURNS TRIGGER AS $$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
     IF (NEW.status = 'scheduled') THEN
-      PERFORM fan_out_broadcast(NEW.course_id, 'student', 'Live Class Scheduled', 'A new live class "' || NEW.title || '" has been scheduled for ' || NEW.start_at, 'student.html?page=live', 'live_class');
+      PERFORM create_broadcast(NEW.course_id, 'student', 'Live Class Scheduled', 'A new live class "' || NEW.title || '" has been scheduled for ' || NEW.start_at, 'student.html?page=live', 'live_class');
     END IF;
   ELSIF (TG_OP = 'UPDATE') THEN
     IF (NEW.status = 'live' AND OLD.status != 'live') THEN
-      PERFORM fan_out_broadcast(NEW.course_id, 'student', 'Live Class Started', 'The class "' || NEW.title || '" has started! Join now.', 'student.html?page=live', 'live_class');
+      PERFORM create_broadcast(NEW.course_id, 'student', 'Live Class Started', 'The class "' || NEW.title || '" has started! Join now.', 'student.html?page=live', 'live_class');
     ELSIF (NEW.status = 'scheduled' AND OLD.status = 'live') THEN
-      PERFORM fan_out_broadcast(NEW.course_id, 'student', 'Teacher Left Room', 'The teacher has left the session for "' || NEW.title || '". Please wait for them to rejoin.', 'student.html?page=live', 'teacher_left');
+      PERFORM create_broadcast(NEW.course_id, 'student', 'Teacher Left Room', 'The teacher has left the session for "' || NEW.title || '". Please wait for them to rejoin.', 'student.html?page=live', 'teacher_left');
     ELSIF (NEW.status = 'completed' AND OLD.status = 'live') THEN
-      PERFORM fan_out_broadcast(NEW.course_id, 'student', 'Class Ended', 'The live class "' || NEW.title || '" has ended.', 'student.html?page=live', 'class_ended');
+      PERFORM create_broadcast(NEW.course_id, 'student', 'Class Ended', 'The live class "' || NEW.title || '" has ended.', 'student.html?page=live', 'class_ended');
     END IF;
   END IF;
   RETURN NEW;
@@ -672,7 +680,7 @@ CREATE TRIGGER tr_live_class_event AFTER INSERT OR UPDATE ON live_classes FOR EA
 CREATE OR REPLACE FUNCTION tr_notify_assignment() RETURNS TRIGGER AS $$
 BEGIN
   IF (NEW.status = 'published' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status != 'published'))) THEN
-    PERFORM fan_out_broadcast(NEW.course_id, 'student', 'New Assignment', 'A new assignment "' || NEW.title || '" has been published.', 'student.html?page=assignments', 'assignment_published');
+    PERFORM create_broadcast(NEW.course_id, 'student', 'New Assignment', 'A new assignment "' || NEW.title || '" has been published.', 'student.html?page=assignments', 'assignment_published');
   END IF;
   RETURN NEW;
 END;
@@ -684,7 +692,7 @@ CREATE TRIGGER tr_assignment_published AFTER INSERT OR UPDATE ON assignments FOR
 CREATE OR REPLACE FUNCTION tr_notify_quiz() RETURNS TRIGGER AS $$
 BEGIN
   IF (NEW.status = 'published' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status != 'published'))) THEN
-    PERFORM fan_out_broadcast(NEW.course_id, 'student', 'New Quiz Available', 'A new quiz "' || NEW.title || '" has been published.', 'student.html?page=quizzes', 'quiz_published');
+    PERFORM create_broadcast(NEW.course_id, 'student', 'New Quiz Available', 'A new quiz "' || NEW.title || '" has been published.', 'student.html?page=quizzes', 'quiz_published');
   END IF;
   RETURN NEW;
 END;
@@ -710,6 +718,24 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 DROP TRIGGER IF EXISTS tr_submission_received ON submissions;
 CREATE TRIGGER tr_submission_received AFTER INSERT OR UPDATE ON submissions FOR EACH ROW EXECUTE PROCEDURE tr_notify_submission();
 
+CREATE OR REPLACE FUNCTION tr_notify_regrade_request() RETURNS TRIGGER AS $$
+DECLARE
+  v_teacher_email VARCHAR(255);
+BEGIN
+  -- Only trigger if regrade_request is newly added or changed and not null
+  IF (NEW.regrade_request IS NOT NULL AND (OLD.regrade_request IS NULL OR OLD.regrade_request != NEW.regrade_request)) THEN
+    SELECT teacher_email INTO v_teacher_email FROM courses WHERE id = NEW.course_id;
+    IF v_teacher_email IS NOT NULL THEN
+      PERFORM notify_user(v_teacher_email, 'Regrade Requested', 'A student has requested a regrade for an assignment.', 'teacher.html?page=grading', 'submission_received');
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS tr_submission_regrade_request ON submissions;
+CREATE TRIGGER tr_submission_regrade_request AFTER UPDATE ON submissions FOR EACH ROW EXECUTE PROCEDURE tr_notify_regrade_request();
+
 CREATE OR REPLACE FUNCTION tr_notify_grade() RETURNS TRIGGER AS $$
 BEGIN
   IF (NEW.status = 'graded' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status != 'graded'))) THEN
@@ -721,6 +747,18 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 DROP TRIGGER IF EXISTS tr_grade_posted ON submissions;
 CREATE TRIGGER tr_grade_posted AFTER INSERT OR UPDATE ON submissions FOR EACH ROW EXECUTE PROCEDURE tr_notify_grade();
+
+CREATE OR REPLACE FUNCTION tr_notify_material_published() RETURNS TRIGGER AS $$
+BEGIN
+  IF (TG_OP = 'INSERT') THEN
+    PERFORM create_broadcast(NEW.course_id, 'student', 'New Material Added', 'New learning material "' || NEW.title || '" has been uploaded.', 'student.html?page=materials', 'system');
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS tr_material_published ON materials;
+CREATE TRIGGER tr_material_published AFTER INSERT ON materials FOR EACH ROW EXECUTE PROCEDURE tr_notify_material_published();
 
 CREATE OR REPLACE FUNCTION tr_sync_course_teacher_name() RETURNS TRIGGER AS $$
 BEGIN
@@ -1947,20 +1985,24 @@ BEGIN
     DELETE FROM notifications WHERE created_at < (NOW() - INTERVAL '30 days') AND is_read = TRUE;
     DELETE FROM violations WHERE expires_at < NOW();
 
-    -- Maintenance: Prune old alerted_ids and cleared_broadcasts from user metadata
-    -- We keep entries from the last 90 days to match notification hard limit
+    -- Maintenance: Prune old tracking IDs from user metadata to prevent bloat
+    -- We keep entries that still exist in the database (which are already pruned to 90 days)
     UPDATE users
     SET metadata = metadata || jsonb_build_object(
-        'alerted_ids', (
-            SELECT jsonb_agg(id) FROM jsonb_array_elements_text(COALESCE(metadata->'alerted_ids', '[]'::jsonb)) id
-            WHERE id::uuid IN (SELECT id FROM notifications WHERE created_at >= v_expired_cutoff UNION SELECT id FROM broadcasts WHERE created_at >= v_expired_cutoff)
-        ),
-        'cleared_broadcasts', (
-            SELECT jsonb_agg(id) FROM jsonb_array_elements_text(COALESCE(metadata->'cleared_broadcasts', '[]'::jsonb)) id
-            WHERE id::uuid IN (SELECT id FROM broadcasts WHERE created_at >= v_expired_cutoff)
-        )
+        'alerted_ids', COALESCE((
+            SELECT jsonb_agg(id) FROM jsonb_array_elements_text(metadata->'alerted_ids') id
+            WHERE id::uuid IN (SELECT id FROM notifications UNION SELECT id FROM broadcasts)
+        ), '[]'::jsonb),
+        'cleared_broadcasts', COALESCE((
+            SELECT jsonb_agg(id) FROM jsonb_array_elements_text(metadata->'cleared_broadcasts') id
+            WHERE id::uuid IN (SELECT id FROM broadcasts)
+        ), '[]'::jsonb),
+        'read_broadcasts', COALESCE((
+            SELECT jsonb_agg(id) FROM jsonb_array_elements_text(metadata->'read_broadcasts') id
+            WHERE id::uuid IN (SELECT id FROM broadcasts)
+        ), '[]'::jsonb)
     )
-    WHERE metadata ? 'alerted_ids' OR metadata ? 'cleared_broadcasts';
+    WHERE metadata ? 'alerted_ids' OR metadata ? 'cleared_broadcasts' OR metadata ? 'read_broadcasts';
 
     -- Automatically clear expired password reset requests (24h window)
     UPDATE users
@@ -2011,16 +2053,11 @@ END;
 $$ LANGUAGE plpgsql;
 
 
+-- Deprecated: Use create_broadcast instead
 CREATE OR REPLACE FUNCTION broadcast_data(n_course_id UUID, n_role VARCHAR, n_title TEXT, n_msg TEXT, n_link TEXT DEFAULT NULL, n_type TEXT DEFAULT 'system', n_expires_in INTERVAL DEFAULT INTERVAL '30 days')
 RETURNS VOID AS $$
 BEGIN
-  -- Security: Only teachers or admins should be able to broadcast
-  IF NOT (is_teacher() OR is_admin()) THEN
-    RAISE EXCEPTION 'Only teachers and admins can broadcast data.';
-  END IF;
-
-  INSERT INTO broadcasts (course_id, target_role, title, message, link, type, expires_at)
-  VALUES (n_course_id, NULLIF(n_role, 'all'), n_title, n_msg, n_link, n_type, NOW() + n_expires_in);
+  PERFORM create_broadcast(n_course_id, n_role, n_title, n_msg, n_link, n_type, n_expires_in);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -2251,24 +2288,31 @@ CREATE POLICY "Discussions: Delete" ON discussions FOR DELETE USING (
 
 -- 13. Notifications Table
 DROP POLICY IF EXISTS "Notifications: User Access" ON notifications;
-CREATE POLICY "Notifications: User Access" ON notifications FOR ALL USING (user_email = get_auth_email() OR is_admin());
+CREATE POLICY "Notifications: SELECT" ON notifications FOR SELECT USING (is_admin() OR user_email = get_auth_email());
+CREATE POLICY "Notifications: UPDATE" ON notifications FOR UPDATE USING (user_email = get_auth_email()) WITH CHECK (user_email = get_auth_email());
+CREATE POLICY "Notifications: DELETE" ON notifications FOR DELETE USING (is_admin() OR user_email = get_auth_email());
 
 -- 14. Broadcasts Table
 DROP POLICY IF EXISTS "Broadcasts: Access" ON broadcasts;
-CREATE POLICY "Broadcasts: Access" ON broadcasts FOR SELECT USING (
+CREATE POLICY "Broadcasts: SELECT" ON broadcasts FOR SELECT USING (
   is_admin() OR
   teacher_email = get_auth_email() OR
   (
     (target_role IS NULL OR target_role = get_auth_role()) AND (
       course_id IS NULL OR
-      (EXISTS (SELECT 1 FROM enrollments WHERE course_id = broadcasts.course_id AND student_email = get_auth_email()) AND EXISTS (SELECT 1 FROM courses WHERE id = broadcasts.course_id AND status = 'published'))
+      EXISTS (
+        SELECT 1 FROM enrollments e
+        JOIN courses c ON e.course_id = c.id
+        WHERE e.course_id = broadcasts.course_id
+        AND e.student_email = get_auth_email()
+        AND c.status = 'published'
+      )
     )
   )
 );
+
 DROP POLICY IF EXISTS "Broadcasts: Manage" ON broadcasts;
-CREATE POLICY "Broadcasts: Manage" ON broadcasts FOR ALL USING (
-  is_admin() OR teacher_email = get_auth_email()
-);
+CREATE POLICY "Broadcasts: MANAGE" ON broadcasts FOR ALL USING (is_admin() OR teacher_email = get_auth_email());
 
 -- 15. Maintenance Table
 DROP POLICY IF EXISTS "Maintenance: Select" ON maintenance;
