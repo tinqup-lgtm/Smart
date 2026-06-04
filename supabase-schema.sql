@@ -638,19 +638,28 @@ END $$;
 
 -- 4. Functional Triggers
 
+CREATE OR REPLACE FUNCTION fan_out_broadcast(n_course_id UUID, n_role VARCHAR, n_title TEXT, n_msg TEXT, n_link TEXT DEFAULT NULL, n_type TEXT DEFAULT 'system')
+RETURNS VOID AS $$
+BEGIN
+  -- We use broadcasts table for event-driven fan-out to prevent notification row bloat
+  INSERT INTO broadcasts (course_id, target_role, title, message, link, type, expires_at)
+  VALUES (n_course_id, NULLIF(n_role, 'all'), n_title, n_msg, n_link, n_type, NOW() + INTERVAL '30 days');
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 CREATE OR REPLACE FUNCTION tr_notify_live_class() RETURNS TRIGGER AS $$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
     IF (NEW.status = 'scheduled') THEN
-      PERFORM fan_out_course_notif(NEW.course_id, 'student', 'Live Class Scheduled', 'A new live class "' || NEW.title || '" has been scheduled for ' || NEW.start_at, 'student.html?page=live', 'live_class');
+      PERFORM fan_out_broadcast(NEW.course_id, 'student', 'Live Class Scheduled', 'A new live class "' || NEW.title || '" has been scheduled for ' || NEW.start_at, 'student.html?page=live', 'live_class');
     END IF;
   ELSIF (TG_OP = 'UPDATE') THEN
     IF (NEW.status = 'live' AND OLD.status != 'live') THEN
-      PERFORM fan_out_course_notif(NEW.course_id, 'student', 'Live Class Started', 'The class "' || NEW.title || '" has started! Join now.', 'student.html?page=live', 'live_class');
+      PERFORM fan_out_broadcast(NEW.course_id, 'student', 'Live Class Started', 'The class "' || NEW.title || '" has started! Join now.', 'student.html?page=live', 'live_class');
     ELSIF (NEW.status = 'scheduled' AND OLD.status = 'live') THEN
-      PERFORM fan_out_course_notif(NEW.course_id, 'student', 'Teacher Left Room', 'The teacher has left the session for "' || NEW.title || '". Please wait for them to rejoin.', 'student.html?page=live', 'teacher_left');
+      PERFORM fan_out_broadcast(NEW.course_id, 'student', 'Teacher Left Room', 'The teacher has left the session for "' || NEW.title || '". Please wait for them to rejoin.', 'student.html?page=live', 'teacher_left');
     ELSIF (NEW.status = 'completed' AND OLD.status = 'live') THEN
-      PERFORM fan_out_course_notif(NEW.course_id, 'student', 'Class Ended', 'The live class "' || NEW.title || '" has ended.', 'student.html?page=live', 'class_ended');
+      PERFORM fan_out_broadcast(NEW.course_id, 'student', 'Class Ended', 'The live class "' || NEW.title || '" has ended.', 'student.html?page=live', 'class_ended');
     END IF;
   END IF;
   RETURN NEW;
@@ -663,7 +672,7 @@ CREATE TRIGGER tr_live_class_event AFTER INSERT OR UPDATE ON live_classes FOR EA
 CREATE OR REPLACE FUNCTION tr_notify_assignment() RETURNS TRIGGER AS $$
 BEGIN
   IF (NEW.status = 'published' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status != 'published'))) THEN
-    PERFORM fan_out_course_notif(NEW.course_id, 'student', 'New Assignment', 'A new assignment "' || NEW.title || '" has been published.', 'student.html?page=assignments', 'assignment_published');
+    PERFORM fan_out_broadcast(NEW.course_id, 'student', 'New Assignment', 'A new assignment "' || NEW.title || '" has been published.', 'student.html?page=assignments', 'assignment_published');
   END IF;
   RETURN NEW;
 END;
@@ -675,7 +684,7 @@ CREATE TRIGGER tr_assignment_published AFTER INSERT OR UPDATE ON assignments FOR
 CREATE OR REPLACE FUNCTION tr_notify_quiz() RETURNS TRIGGER AS $$
 BEGIN
   IF (NEW.status = 'published' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status != 'published'))) THEN
-    PERFORM fan_out_course_notif(NEW.course_id, 'student', 'New Quiz Available', 'A new quiz "' || NEW.title || '" has been published.', 'student.html?page=quizzes', 'quiz_published');
+    PERFORM fan_out_broadcast(NEW.course_id, 'student', 'New Quiz Available', 'A new quiz "' || NEW.title || '" has been published.', 'student.html?page=quizzes', 'quiz_published');
   END IF;
   RETURN NEW;
 END;
@@ -1928,13 +1937,30 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- Periodic Purge Function
 CREATE OR REPLACE FUNCTION purge_expired_records()
 RETURNS TRIGGER AS $$
+DECLARE
+  v_expired_cutoff TIMESTAMP WITH TIME ZONE := (NOW() - INTERVAL '90 days');
 BEGIN
     DELETE FROM broadcasts WHERE expires_at < NOW();
     -- Hard limit: Delete all notifications older than 90 days
-    DELETE FROM notifications WHERE created_at < (NOW() - INTERVAL '90 days');
+    DELETE FROM notifications WHERE created_at < v_expired_cutoff;
     -- Soft limit: Delete read notifications older than 30 days
     DELETE FROM notifications WHERE created_at < (NOW() - INTERVAL '30 days') AND is_read = TRUE;
     DELETE FROM violations WHERE expires_at < NOW();
+
+    -- Maintenance: Prune old alerted_ids and cleared_broadcasts from user metadata
+    -- We keep entries from the last 90 days to match notification hard limit
+    UPDATE users
+    SET metadata = metadata || jsonb_build_object(
+        'alerted_ids', (
+            SELECT jsonb_agg(id) FROM jsonb_array_elements_text(COALESCE(metadata->'alerted_ids', '[]'::jsonb)) id
+            WHERE id::uuid IN (SELECT id FROM notifications WHERE created_at >= v_expired_cutoff UNION SELECT id FROM broadcasts WHERE created_at >= v_expired_cutoff)
+        ),
+        'cleared_broadcasts', (
+            SELECT jsonb_agg(id) FROM jsonb_array_elements_text(COALESCE(metadata->'cleared_broadcasts', '[]'::jsonb)) id
+            WHERE id::uuid IN (SELECT id FROM broadcasts WHERE created_at >= v_expired_cutoff)
+        )
+    )
+    WHERE metadata ? 'alerted_ids' OR metadata ? 'cleared_broadcasts';
 
     -- Automatically clear expired password reset requests (24h window)
     UPDATE users
@@ -1998,31 +2024,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-CREATE OR REPLACE FUNCTION fan_out_course_notif(n_course_id UUID, n_role VARCHAR, n_title TEXT, n_msg TEXT, n_link TEXT DEFAULT NULL, n_type TEXT DEFAULT 'system')
-RETURNS VOID AS $$
-BEGIN
-  IF n_role = 'student' THEN
-    INSERT INTO notifications (user_email, title, message, link, type)
-    SELECT student_email, n_title, n_msg, n_link, n_type
-    FROM enrollments
-    WHERE course_id = n_course_id;
-  ELSIF n_role = 'teacher' THEN
-    INSERT INTO notifications (user_email, title, message, link, type)
-    SELECT teacher_email, n_title, n_msg, n_link, n_type
-    FROM courses
-    WHERE id = n_course_id AND teacher_email IS NOT NULL;
-  ELSIF n_role = 'all' OR n_role IS NULL THEN
-    INSERT INTO notifications (user_email, title, message, link, type)
-    SELECT student_email, n_title, n_msg, n_link, n_type
-    FROM enrollments
-    WHERE course_id = n_course_id
-    UNION
-    SELECT teacher_email, n_title, n_msg, n_link, n_type
-    FROM courses
-    WHERE id = n_course_id AND teacher_email IS NOT NULL;
-  END IF;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- 8. Seed Data
 

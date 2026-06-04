@@ -608,22 +608,18 @@ async function broadcastNotif() {
   if (!vMsg.valid) return UI.showNotification(vMsg.message, 'warn');
 
   try {
-    const expiryDate = new Date();
-    expiryDate.setDate(expiryDate.getDate() + expiryDays);
+    // Utilize Edge Function Notification Engine for centralized delivery
+    await SupabaseDB.invokeFunction('notify', {
+        type: 'broadcast',
+        payload: {
+            title,
+            message: msg,
+            target_role: role,
+            expires_in: expiryDays
+        }
+    });
 
-    const broadcast = {
-        id: crypto.randomUUID(),
-        title,
-        message: msg,
-        target_role: role === 'all' ? null : role,
-        type: 'system',
-        expires_at: expiryDate.toISOString(),
-        created_at: new Date().toISOString()
-    };
-
-    await SupabaseDB.saveBroadcast(broadcast);
-
-    UI.showNotification(`Broadcast sent successfully.`, 'success');
+    UI.showNotification(`Broadcast delivered to engine.`, 'success');
     document.getElementById('bcTitle').value = '';
     document.getElementById('bcMsg').value = '';
   } catch (e) { UI.showNotification('Broadcast failed: ' + e.message, 'error'); }
