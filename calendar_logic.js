@@ -194,6 +194,7 @@ class CalendarManager {
 const calendarMgr = new CalendarManager();
 
 async function renderCalendar() {
+    const renderId = ++window.currentRenderId;
     const content = document.getElementById('pageContent');
     if (!content) return;
     if (typeof clearActiveCountdowns === 'function') clearActiveCountdowns();
@@ -201,6 +202,7 @@ async function renderCalendar() {
     content.innerHTML = `<div class="flex-center p-40"><div class="bar" style="width:100px; height:4px; background:var(--purple); animation: pulse 1.5s infinite"></div></div>`;
 
     await calendarMgr.init();
+    if (renderId !== window.currentRenderId) return;
     renderCalendarUI();
 }
 
