@@ -662,10 +662,10 @@ class SupabaseDB {
     static async deleteEnrollment(courseId, studentEmail) {
         // Thorough cleanup: Delete all related student history for this course
         try {
-            // Get ALL assignment and quiz IDs for this course (bypass pagination)
+            // Get ALL assignment and quiz IDs for this course (bypass pagination hardening)
             const [{ data: assignments }, { data: quizzes }] = await Promise.all([
-                supabaseClient.from('assignments').select('id').eq('course_id', courseId),
-                supabaseClient.from('quizzes').select('id').eq('course_id', courseId)
+                supabaseClient.from('assignments').select('id').eq('course_id', courseId).range(0, 9999),
+                supabaseClient.from('quizzes').select('id').eq('course_id', courseId).range(0, 9999)
             ]);
 
             const assignIds = (assignments || []).map(a => a.id);
@@ -693,9 +693,9 @@ class SupabaseDB {
                 .delete()
                 .match({ course_id: courseId, user_email: studentEmail });
 
-            // Delete attendance
-            const { data: liveClasses } = await this.getLiveClasses(courseId);
-            const classIds = liveClasses.map(lc => lc.id);
+            // Delete attendance (bypass pagination hardening)
+            const { data: liveClassesRes } = await supabaseClient.from('live_classes').select('id').eq('course_id', courseId).range(0, 9999);
+            const classIds = (liveClassesRes || []).map(lc => lc.id);
             if (classIds.length > 0) {
                 await supabaseClient
                     .from('attendance')

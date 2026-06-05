@@ -1,11 +1,15 @@
-let activeCountdowns = [];
-let currentGradeBookData = null;
-let _warnedEnd = false;
-
+const TeacherState = {
+  activeCountdowns: [],
+  currentGradeBookData: null,
+  gradeBookRawData: null,
+  currentStudents: [],
+  _warnedEnd: false,
+  liveClassTimer: null
+};
 
 function clearActiveCountdowns() {
-    UI.clearCountdowns(activeCountdowns, liveClassTimer);
-    liveClassTimer = null;
+    UI.clearCountdowns(TeacherState.activeCountdowns, TeacherState.liveClassTimer);
+    TeacherState.liveClassTimer = null;
 }
 
 function debounce(func, wait) {
@@ -33,6 +37,7 @@ async function renderDashboard() {
       SupabaseDB.getCount('submissions', q => q.eq('assignments.teacher_email', user.email).or('status.eq.submitted,regrade_request.not.is.null'), '*, assignments!inner(*)'),
       SupabaseDB.getViolations(null, null, user.email)
     ]);
+    if (renderId !== window.currentRenderId) return;
     const violationsCount = violationsRes.total || 0;
 
     content.innerHTML = `
@@ -530,7 +535,7 @@ async function renderAssignments() {
         compact: true,
         label: 'Expires in:',
         onEnd: () => renderAssignments()
-    }).forEach(c => activeCountdowns.push(c));
+    }).forEach(c => TeacherState.activeCountdowns.push(c));
 
   } catch (error) {
     console.error('Assignments error:', error);
@@ -562,7 +567,7 @@ async function renderGrading() {
     content.innerHTML = `
       <div class="flex-between mb-20">
         <h2 class="m-0">Grading Queue</h2>
-        <div class="small text-muted">${total} Submissions Pending</div>
+        <div class="small text-muted">${escapeHtml(total)} Submissions Pending</div>
       </div>
       <div id="gradingQueueTable"></div>
     `;
@@ -660,17 +665,7 @@ async function renderStudents() {
         searchInput.setSelectionRange(searchTerm.length, searchTerm.length);
     }
 
-    const exportStudents = async (type) => {
-        const headers = ['Name', 'Email', 'Course'];
-        const rows = students.map(s => [s.full_name || 'N/A', s.email, s.course_title || 'Unknown']);
-
-        if (type === 'csv') {
-            Exporter.csv('students_list.csv', headers, rows);
-        } else {
-            await Exporter.pdf('students_list.pdf', 'Enrolled Students List', headers, rows);
-        }
-    };
-    window.exportStudents = exportStudents;
+    TeacherState.currentStudents = students;
 
   } catch (error) {
     console.error('Students error:', error);
@@ -1257,15 +1252,21 @@ async function renderHelp() {
   clearActiveCountdowns();
   const content = document.getElementById('pageContent');
   if (!content) return;
-  if (renderId !== window.currentRenderId) return;
 
-  content.innerHTML = `
-    <div class="flex-between mb-20">
-        <h2 class="m-0">Help & Support</h2>
-    </div>
-    <div id="helpContainer"></div>
-  `;
-  HelpSystem.renderHelpCenter('helpContainer', 'teacher');
+  try {
+    if (renderId !== window.currentRenderId) return;
+
+    content.innerHTML = `
+      <div class="flex-between mb-20">
+          <h2 class="m-0">Help & Support</h2>
+      </div>
+      <div id="helpContainer"></div>
+    `;
+    HelpSystem.renderHelpCenter('helpContainer', 'teacher');
+  } catch (error) {
+    console.error('Help error:', error);
+    UI.showNotification('Error loading help center: ' + error.message, 'error');
+  }
 }
 
 async function renderAntiCheat() {
@@ -1547,9 +1548,14 @@ function updateACPreview() {
 }
 
 async function renderSettings() {
-    const renderId = ++window.currentRenderId;
+  const renderId = ++window.currentRenderId;
+  try {
     if (renderId !== window.currentRenderId) return;
     SettingsManager.render('Enable real-time desktop notifications for student submissions and system alerts.');
+  } catch (error) {
+    console.error('Settings error:', error);
+    UI.showNotification('Error loading settings: ' + error.message, 'error');
+  }
 }
 
 async function renderLiveClasses() {
@@ -1636,7 +1642,7 @@ async function renderLiveClasses() {
     Countdown.createAll('.live-sch-countdown', {
         showProgress: true,
         onEnd: () => renderLiveClasses()
-    }).forEach(c => activeCountdowns.push(c));
+    }).forEach(c => TeacherState.activeCountdowns.push(c));
 
   } catch (error) {
     console.error('Live Classes error:', error);
@@ -1786,15 +1792,14 @@ async function showLiveClassForm(liveClass = null) {
 }
 
 let jitsiAPI = null;
-let liveClassTimer = null;
 
 function startLiveClassTimer(id, endAt) {
-    _warnedEnd = false;
+    TeacherState._warnedEnd = false;
     const endTime = new Date(endAt).getTime();
 
-    liveClassTimer = Countdown.create(null, {
+    TeacherState.liveClassTimer = Countdown.create(null, {
         targetDate: endTime,
-        referenceDate: liveClassTimer?.referenceDate || TimerManager.getTime(),
+        referenceDate: TeacherState.liveClassTimer?.referenceDate || TimerManager.getTime(),
         headless: true,
         onEnd: async () => {
             if (await UI.confirm('Scheduled class time has reached. Do you want to extend by 15 minutes? Press Cancel to end class.', 'Class Time Reached')) {
@@ -1804,8 +1809,8 @@ function startLiveClassTimer(id, endAt) {
             }
         },
         onTick: (time) => {
-            if (time.total <= 5 * 60 * 1000 && !_warnedEnd && time.total > 0) {
-                _warnedEnd = true;
+            if (time.total <= 5 * 60 * 1000 && !TeacherState._warnedEnd && time.total > 0) {
+                TeacherState._warnedEnd = true;
                 UI.showNotification('Class ends in 5 minutes', 'warn');
             }
         }
@@ -1933,12 +1938,12 @@ async function startTeacherLiveClass(id, roomName) {
     container.classList.add('hidden');
     if (modControls) modControls.classList.add('hidden');
     if (stopBtn) stopBtn.classList.add('hidden');
-    if (liveClassTimer instanceof Countdown) {
-        liveClassTimer.destroy();
-        liveClassTimer = null;
-    } else if (liveClassTimer) {
-        clearInterval(liveClassTimer);
-        liveClassTimer = null;
+    if (TeacherState.liveClassTimer instanceof Countdown) {
+        TeacherState.liveClassTimer.destroy();
+        TeacherState.liveClassTimer = null;
+    } else if (TeacherState.liveClassTimer) {
+        clearInterval(TeacherState.liveClassTimer);
+        TeacherState.liveClassTimer = null;
     }
 
     // Only set status back to scheduled if the teacher didn't stop the class manually
@@ -1964,12 +1969,12 @@ async function startTeacherLiveClass(id, roomName) {
 
 async function stopLiveClass(id) {
     if (await UI.confirm('Are you sure you want to stop the class? This will disconnect all participants.', 'Stop Class')) {
-        if (liveClassTimer instanceof Countdown) {
-            liveClassTimer.destroy();
-            liveClassTimer = null;
-        } else if (liveClassTimer) {
-            clearInterval(liveClassTimer);
-            liveClassTimer = null;
+        if (TeacherState.liveClassTimer instanceof Countdown) {
+            TeacherState.liveClassTimer.destroy();
+            TeacherState.liveClassTimer = null;
+        } else if (TeacherState.liveClassTimer) {
+            clearInterval(TeacherState.liveClassTimer);
+            TeacherState.liveClassTimer = null;
         }
 
         try {
@@ -2144,7 +2149,7 @@ async function renderQuizzes() {
     Countdown.createAll('.quiz-sch-countdown', {
         showProgress: true,
         onEnd: () => renderQuizzes()
-    }).forEach(c => activeCountdowns.push(c));
+    }).forEach(c => TeacherState.activeCountdowns.push(c));
 
   } catch (error) {
     console.error('Quizzes error:', error);
@@ -2677,101 +2682,7 @@ async function renderGradeBook() {
             <div id="gradeBookArea" class="mt-20"></div>
         `;
 
-        const filterGradeBook = async () => {
-            const courseId = document.getElementById('gbCourseSelect').value;
-            const area = document.getElementById('gradeBookArea');
-
-            let filteredCourses = courseId ? courses.filter(c => c.id === courseId) : courses;
-            let courseIds = filteredCourses.map(c => c.id);
-
-            const { data: enrollments } = await SupabaseDB.getEnrollmentsByCourses(courseIds);
-
-            currentGradeBookData = { filteredCourses, enrollments, assignments, quizzes, submissions, quizSubs };
-
-            let html = '';
-
-            for (const course of filteredCourses) {
-                const courseAssigns = assignments.filter(a => a.course_id === course.id && a.status === 'published');
-                const courseQuizzes = quizzes.filter(q => q.course_id === course.id && q.status === 'published');
-                const courseStudents = enrollments.filter(e => e.course_id === course.id).map(e => e.student_email);
-
-                if (courseStudents.length === 0) {
-                    html += `<div class="card mb-20"><h3>${escapeHtml(course.title)}</h3><p class="empty small">No students enrolled.</p></div>`;
-                    continue;
-                }
-
-                html += `
-                    <div class="card mb-20" style="padding:0; overflow:hidden">
-                        <div class="p-15" style="background:var(--bg)">
-                            <h3 class="m-0">${escapeHtml(course.title)}</h3>
-                            <p class="tiny text-muted m-0">${courseStudents.length} Students | ${courseAssigns.length} Assignments | ${courseQuizzes.length} Quizzes</p>
-                        </div>
-                        <div style="overflow-x:auto">
-                            <table class="m-0">
-                                <thead>
-                                    <tr>
-                                        <th style="min-width:200px">Student</th>
-                                        ${courseAssigns.map(a => `<th class="text-center" style="min-width:120px" title="${escapeAttr(a.title)}">📝 ${escapeHtml(a.title.substring(0,10))}...</th>`).join('')}
-                                        ${courseQuizzes.map(q => `<th class="text-center" style="min-width:120px" title="${escapeAttr(q.title)}">❓ ${escapeHtml(q.title.substring(0,10))}...</th>`).join('')}
-                                        <th class="text-center" style="min-width:100px; background:#f8fafc">Final Avg</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${courseStudents.map(email => {
-                                        let earnedPoints = 0;
-                                        let itemsCount = 0;
-
-                                        const assignmentCells = courseAssigns.map(a => {
-                                            const sub = submissions.find(s => s.assignment_id === a.id && s.student_email === email);
-                                            if (sub && sub.status === 'graded') {
-                                                earnedPoints += sub.final_grade;
-                                                itemsCount++;
-                                                return `
-                                                    <td class="text-center">
-                                                        <span class="badge ${sub.final_grade >= 70 ? 'badge-active' : 'badge-warn'}">${sub.final_grade}%</span>
-                                                        <div class="tiny text-muted mt-5">${sub.grade} / ${a.points_possible}</div>
-                                                    </td>`;
-                                            }
-                                            return `<td class="text-center"><span class="tiny text-muted">-</span></td>`;
-                                        }).join('');
-
-                                        const quizCells = courseQuizzes.map(q => {
-                                            const sub = quizSubs.filter(s => s.quiz_id === q.id && s.student_email === email && s.status === 'submitted')
-                                                               .sort((a,b) => (b.score || 0) - (a.score || 0))[0];
-                                            if (sub) {
-                                                earnedPoints += sub.score;
-                                                itemsCount++;
-                                                const rawScore = Math.round((sub.score / 100) * sub.total_points);
-                                                return `
-                                                    <td class="text-center">
-                                                        <span class="badge ${sub.score >= 70 ? 'badge-active' : 'badge-warn'}">${sub.score}%</span>
-                                                        <div class="tiny text-muted mt-5">${rawScore} / ${sub.total_points}</div>
-                                                    </td>`;
-                                            }
-                                            return `<td class="text-center"><span class="tiny text-muted">-</span></td>`;
-                                        }).join('');
-
-                                        const avg = itemsCount > 0 ? Math.round(earnedPoints / itemsCount) : 0;
-
-                                        return `
-                                            <tr>
-                                                <td><div class="bold small">${escapeHtml(email)}</div></td>
-                                                ${assignmentCells}
-                                                ${quizCells}
-                                                <td class="text-center" style="background:#f8fafc"><strong class="${avg >= 70 ? 'success-text' : 'danger-text'}">${itemsCount > 0 ? avg + '%' : '-'}</strong></td>
-                                            </tr>
-                                        `;
-                                    }).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                `;
-            }
-            area.innerHTML = html || '<div class="empty">No data available.</div>';
-        };
-        window.filterGradeBook = filterGradeBook;
-
+        TeacherState.gradeBookRawData = { courses, assignments, quizzes, submissions, quizSubs };
         filterGradeBook();
     } catch (error) {
         console.error('Grade Book error:', error);
@@ -2780,7 +2691,7 @@ async function renderGradeBook() {
 }
 
 async function exportGradeBook(type) {
-    const data = currentGradeBookData;
+    const data = TeacherState.currentGradeBookData;
     if (!data) return UI.showNotification('No data to export', 'warn');
 
     const { filteredCourses, enrollments, assignments, quizzes, submissions, quizSubs } = data;
@@ -3018,6 +2929,119 @@ async function deleteMaterial(id) {
 }
 
 // Consolidate global window assignments
+async function exportStudents(type) {
+    const headers = ['Name', 'Email', 'Course'];
+    const rows = TeacherState.currentStudents.map(s => [s.full_name || 'N/A', s.email, s.course_title || 'Unknown']);
+
+    if (type === 'csv') {
+        Exporter.csv('students_list.csv', headers, rows);
+    } else {
+        await Exporter.pdf('students_list.pdf', 'Enrolled Students List', headers, rows);
+    }
+}
+
+async function filterGradeBook() {
+    const { courses, assignments, quizzes, submissions, quizSubs } = TeacherState.gradeBookRawData;
+    const courseId = document.getElementById('gbCourseSelect').value;
+    const area = document.getElementById('gradeBookArea');
+    const renderId = window.currentRenderId;
+
+    try {
+        let filteredCourses = courseId ? courses.filter(c => c.id === courseId) : courses;
+        let courseIds = filteredCourses.map(c => c.id);
+
+        const { data: enrollments } = await SupabaseDB.getEnrollmentsByCourses(courseIds);
+        if (renderId !== window.currentRenderId) return;
+
+        TeacherState.currentGradeBookData = { filteredCourses, enrollments, assignments, quizzes, submissions, quizSubs };
+
+        let html = '';
+
+        for (const course of filteredCourses) {
+            const courseAssigns = assignments.filter(a => a.course_id === course.id && a.status === 'published');
+            const courseQuizzes = quizzes.filter(q => q.course_id === course.id && q.status === 'published');
+            const courseStudents = enrollments.filter(e => e.course_id === course.id).map(e => e.student_email);
+
+            if (courseStudents.length === 0) {
+                html += `<div class="card mb-20"><h3>${escapeHtml(course.title)}</h3><p class="empty small">No students enrolled.</p></div>`;
+                continue;
+            }
+
+            html += `
+                <div class="card mb-20" style="padding:0; overflow:hidden">
+                    <div class="p-15" style="background:var(--bg)">
+                        <h3 class="m-0">${escapeHtml(course.title)}</h3>
+                        <p class="tiny text-muted m-0">${courseStudents.length} Students | ${courseAssigns.length} Assignments | ${courseQuizzes.length} Quizzes</p>
+                    </div>
+                    <div style="overflow-x:auto">
+                        <table class="m-0">
+                            <thead>
+                                <tr>
+                                    <th style="min-width:200px">Student</th>
+                                    ${courseAssigns.map(a => `<th class="text-center" style="min-width:120px" title="${escapeAttr(a.title)}">📝 ${escapeHtml(a.title.substring(0,10))}...</th>`).join('')}
+                                    ${courseQuizzes.map(q => `<th class="text-center" style="min-width:120px" title="${escapeAttr(q.title)}">❓ ${escapeHtml(q.title.substring(0,10))}...</th>`).join('')}
+                                    <th class="text-center" style="min-width:100px; background:#f8fafc">Final Avg</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${courseStudents.map(email => {
+                                    let earnedPoints = 0;
+                                    let itemsCount = 0;
+
+                                    const assignmentCells = courseAssigns.map(a => {
+                                        const sub = submissions.find(s => s.assignment_id === a.id && s.student_email === email);
+                                        if (sub && sub.status === 'graded') {
+                                            earnedPoints += sub.final_grade;
+                                            itemsCount++;
+                                            return `
+                                                <td class="text-center">
+                                                    <span class="badge ${sub.final_grade >= 70 ? 'badge-active' : 'badge-warn'}">${sub.final_grade}%</span>
+                                                    <div class="tiny text-muted mt-5">${sub.grade} / ${a.points_possible}</div>
+                                                </td>`;
+                                        }
+                                        return `<td class="text-center"><span class="tiny text-muted">-</span></td>`;
+                                    }).join('');
+
+                                    const quizCells = courseQuizzes.map(q => {
+                                        const sub = quizSubs.filter(s => s.quiz_id === q.id && s.student_email === email && s.status === 'submitted')
+                                                            .sort((a,b) => (b.score || 0) - (a.score || 0))[0];
+                                        if (sub) {
+                                            earnedPoints += sub.score;
+                                            itemsCount++;
+                                            const rawScore = Math.round((sub.score / 100) * sub.total_points);
+                                            return `
+                                                <td class="text-center">
+                                                    <span class="badge ${sub.score >= 70 ? 'badge-active' : 'badge-warn'}">${sub.score}%</span>
+                                                    <div class="tiny text-muted mt-5">${rawScore} / ${sub.total_points}</div>
+                                                </td>`;
+                                        }
+                                        return `<td class="text-center"><span class="tiny text-muted">-</span></td>`;
+                                    }).join('');
+
+                                    const avg = itemsCount > 0 ? Math.round(earnedPoints / itemsCount) : 0;
+
+                                    return `
+                                        <tr>
+                                            <td><div class="bold small">${escapeHtml(email)}</div></td>
+                                            ${assignmentCells}
+                                            ${quizCells}
+                                            <td class="text-center" style="background:#f8fafc"><strong class="${avg >= 70 ? 'success-text' : 'danger-text'}">${itemsCount > 0 ? avg + '%' : '-'}</strong></td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+        area.innerHTML = html || '<div class="empty">No data available.</div>';
+    } catch (error) {
+        console.error('Filter Grade Book error:', error);
+        UI.showNotification('Error filtering grade book: ' + error.message, 'error');
+    }
+}
+
 window.toggleTeacherAssignmentType = (select) => {
     const container = select.parentElement.parentElement.parentElement.querySelector('.q-type-ext');
     if (select.value === 'file') {
@@ -3095,6 +3119,8 @@ window.updateACPreview = updateACPreview;
 window.clearStudentViolations = clearStudentViolations;
 window.viewAssessmentViolations = viewAssessmentViolations;
 window.viewStudentIntegrityReport = viewStudentIntegrityReport;
+window.exportStudents = exportStudents;
+window.filterGradeBook = filterGradeBook;
 
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await initDashboard('teacher');
