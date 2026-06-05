@@ -662,13 +662,14 @@ class SupabaseDB {
     static async deleteEnrollment(courseId, studentEmail) {
         // Thorough cleanup: Delete all related student history for this course
         try {
+            // Get ALL assignment and quiz IDs for this course (bypass pagination)
             const [{ data: assignments }, { data: quizzes }] = await Promise.all([
-                this.getAssignments(null, courseId),
-                this.getQuizzes(courseId)
+                supabaseClient.from('assignments').select('id').eq('course_id', courseId),
+                supabaseClient.from('quizzes').select('id').eq('course_id', courseId)
             ]);
 
-            const assignIds = assignments.map(a => a.id);
-            const quizIds = quizzes.map(q => q.id);
+            const assignIds = (assignments || []).map(a => a.id);
+            const quizIds = (quizzes || []).map(q => q.id);
 
             // Delete submissions (with storage cleanup)
             if (assignIds.length > 0) {
@@ -714,6 +715,22 @@ class SupabaseDB {
                 .from('violations')
                 .delete()
                 .match({ course_id: courseId, user_email: studentEmail });
+
+            // Delete certificates (and their files)
+            const { data: certs } = await supabaseClient
+                .from('certificates')
+                .select('certificate_url')
+                .match({ course_id: courseId, student_email: studentEmail });
+
+            if (certs && certs.length > 0) {
+                for (const cert of certs) {
+                    if (cert.certificate_url) await this.deleteFileByUrl(cert.certificate_url);
+                }
+                await supabaseClient
+                    .from('certificates')
+                    .delete()
+                    .match({ course_id: courseId, student_email: studentEmail });
+            }
         } catch (e) {
             console.warn('History cleanup during unenrollment partially failed:', e);
         }

@@ -1,4 +1,6 @@
 let activeCountdowns = [];
+let currentGradeBookData = null;
+let _warnedEnd = false;
 
 
 function clearActiveCountdowns() {
@@ -6,8 +8,16 @@ function clearActiveCountdowns() {
     liveClassTimer = null;
 }
 
-async function renderDashboard() {
+function debounce(func, wait) {
+    let timeout;
+    return function(...args) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), wait);
+    };
+}
 
+async function renderDashboard() {
+  const renderId = ++window.currentRenderId;
   NotificationManager.init();
   const content = document.getElementById('pageContent');
   if (!content) return;
@@ -15,6 +25,7 @@ async function renderDashboard() {
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const [coursesCount, assignmentsCount, submissionsCount, pendingCount, violationsRes] = await Promise.all([
       SupabaseDB.getCount('courses', q => q.eq('teacher_email', user.email)),
       SupabaseDB.getCount('assignments', q => q.eq('teacher_email', user.email)),
@@ -45,13 +56,16 @@ async function renderDashboard() {
 }
 
 async function renderCourses() {
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
   clearActiveCountdowns();
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const { data: courses } = await SupabaseDB.getCourses(user.email);
+    if (renderId !== window.currentRenderId) return;
 
     content.innerHTML = `
     <div class="card flex-between">
@@ -91,7 +105,6 @@ async function loadAndEditCourse(id) {
         UI.showNotification('Error loading course: ' + e.message, 'error');
     }
 }
-window.loadAndEditCourse = loadAndEditCourse;
 
 function showCourseForm(course = null) {
   const content = document.getElementById('pageContent');
@@ -370,7 +383,7 @@ async function editLesson(lessonId, courseId) {
   await showLessonForm(courseId, lesson);
 }
 async function deleteLessonById(id, courseId) {
-  if (confirm('Are you sure you want to delete this lesson?')) {
+  if (await UI.confirm('Are you sure you want to delete this lesson?', 'Delete Lesson')) {
     try {
       await SupabaseDB.deleteLesson(id);
       UI.showNotification('Lesson deleted', 'success');
@@ -442,7 +455,7 @@ function showTopicForm(courseId, topic = null) {
 }
 
 async function deleteTopicById(id, courseId) {
-  if (confirm('Are you sure you want to delete this topic? All lessons inside this topic will also be deleted.')) {
+  if (await UI.confirm('Are you sure you want to delete this topic? All lessons inside this topic will also be deleted.', 'Delete Topic')) {
     try {
       await SupabaseDB.deleteTopic(id);
       UI.showNotification('Topic deleted', 'success');
@@ -454,7 +467,7 @@ async function deleteTopicById(id, courseId) {
 }
 
 async function deleteCourseById(id) {
-  if (confirm('Are you sure you want to delete this course and all its content?')) {
+  if (await UI.confirm('Are you sure you want to delete this course and all its content?', 'Delete Course')) {
     UI.showNotification('Deleting course...', 'info');
     try {
       await SupabaseDB.deleteCourse(id);
@@ -466,17 +479,20 @@ async function deleteCourseById(id) {
   }
 }
 async function renderAssignments() {
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
   clearActiveCountdowns();
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const now = TimerManager.getTime();
     const [{ data: assignments }, { data: courses }] = await Promise.all([
       SupabaseDB.getAssignments(user.email, null, null),
       SupabaseDB.getCourses(user.email, null)
     ]);
+    if (renderId !== window.currentRenderId) return;
 
   content.innerHTML = `
     <div class="card flex-between">
@@ -526,12 +542,14 @@ async function renderAssignments() {
   }
 }
 async function renderGrading() {
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
   clearActiveCountdowns();
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     // Optimization: Use server-side filtering for submitted status and regrade requests
     const [{ data: submittedSubs, total }, { data: assignments }] = await Promise.all([
       SupabaseDB.getSubmissions(null, null, user.email, {
@@ -539,6 +557,7 @@ async function renderGrading() {
       }),
       SupabaseDB.getAssignments(user.email, null, null)
     ]);
+    if (renderId !== window.currentRenderId) return;
 
     content.innerHTML = `
       <div class="flex-between mb-20">
@@ -571,7 +590,7 @@ async function renderGrading() {
   }
 }
 async function renderStudents() {
-
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
   clearActiveCountdowns();
@@ -580,12 +599,15 @@ async function renderStudents() {
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const { data: myCourses } = await SupabaseDB.getCourses(user.email, null);
+    if (renderId !== window.currentRenderId) return;
     const myCourseIds = (myCourses || []).map(c => c.id);
 
     const { data: enrollments } = await SupabaseDB.getEnrollmentsByCourses(myCourseIds, {
         searchTerm
     });
+    if (renderId !== window.currentRenderId) return;
 
     const students = enrollments.map(e => {
         return {
@@ -601,7 +623,7 @@ async function renderStudents() {
       <div class="flex-between mb-20">
         <h2 class="m-0">My Enrolled Students</h2>
         <div class="flex gap-10">
-            <input type="text" id="studentSearch" placeholder="Search by name or email..." class="m-0" style="width:250px" value="${escapeAttr(searchTerm)}" oninput="renderStudents()">
+            <input type="text" id="studentSearch" placeholder="Search by name or email..." class="m-0" style="width:250px" value="${escapeAttr(searchTerm)}">
             <button class="button secondary small w-auto" onclick="exportStudents('csv')">CSV</button>
             <button class="button secondary small w-auto" onclick="exportStudents('pdf')">PDF</button>
         </div>
@@ -628,7 +650,17 @@ async function renderStudents() {
     <div id="certFormArea" class="hidden mt-20"></div>
     `;
 
-    window.exportStudents = async (type) => {
+    const searchInput = document.getElementById('studentSearch');
+    if (searchInput) {
+        searchInput.addEventListener('input', debounce(() => {
+            renderStudents();
+        }, 500));
+        searchInput.focus();
+        // Restore cursor position if possible or just end
+        searchInput.setSelectionRange(searchTerm.length, searchTerm.length);
+    }
+
+    const exportStudents = async (type) => {
         const headers = ['Name', 'Email', 'Course'];
         const rows = students.map(s => [s.full_name || 'N/A', s.email, s.course_title || 'Unknown']);
 
@@ -638,6 +670,7 @@ async function renderStudents() {
             await Exporter.pdf('students_list.pdf', 'Enrolled Students List', headers, rows);
         }
     };
+    window.exportStudents = exportStudents;
 
   } catch (error) {
     console.error('Students error:', error);
@@ -650,7 +683,7 @@ async function renderStudents() {
 }
 
 async function unenrollStudent(courseId, studentEmail) {
-  if (!confirm('Are you sure you want to completely unenroll this student? This will delete all their progress in this course.')) return;
+  if (!await UI.confirm('Are you sure you want to completely unenroll this student? This will delete all their progress in this course.', 'Confirm Unenrollment')) return;
   try {
     await SupabaseDB.deleteEnrollment(courseId, studentEmail);
     UI.showNotification('Student unenrolled successfully.', 'success');
@@ -659,7 +692,6 @@ async function unenrollStudent(courseId, studentEmail) {
     UI.showNotification('Unenrollment failed: ' + e.message, 'error');
   }
 }
-window.unenrollStudent = unenrollStudent;
 
 async function showCertForm(studentEmail) {
   const user = await SessionManager.getCurrentUser();
@@ -720,14 +752,14 @@ async function issueCert(studentEmail) {
     btn.disabled = false; btn.textContent = 'Issue & Generate PDF';
   }
 }
-window.updateAssignmentTotalPoints = () => {
+function updateAssignmentTotalPoints() {
   const total = Array.from(document.querySelectorAll('#questionsContainer .q-points'))
       .reduce((sum, input) => sum + (parseFloat(input.value) || 0), 0);
   const pointsInput = document.getElementById('assignmentPoints');
   if (pointsInput) pointsInput.value = total;
-};
+}
 
-window.addQuestionField = (q = null) => {
+function addQuestionField(q = null) {
   const container = document.getElementById('questionsContainer');
   if (!container) return;
   const div = document.createElement('div');
@@ -736,7 +768,7 @@ window.addQuestionField = (q = null) => {
   div.innerHTML = `
     <div class="flex-between mb-15">
       <h4 class="m-0">Assignment Question</h4>
-      <button type="button" class="button danger small w-auto" onclick="this.closest('.question').remove(); window.updateAssignmentTotalPoints();">Remove Question</button>
+      <button type="button" class="button danger small w-auto" onclick="this.closest('.question').remove(); updateAssignmentTotalPoints();">Remove Question</button>
     </div>
     <div class="grid">
       <div class="mb-10">
@@ -756,11 +788,11 @@ window.addQuestionField = (q = null) => {
   UI.createRTE(qId, { minHeight: '60px' });
 
   // Auto-update total points when individual question points change
-  div.querySelector('.q-points').addEventListener('input', window.updateAssignmentTotalPoints);
-  div.querySelector('.q-points').addEventListener('change', window.updateAssignmentTotalPoints);
+  div.querySelector('.q-points').addEventListener('input', updateAssignmentTotalPoints);
+  div.querySelector('.q-points').addEventListener('change', updateAssignmentTotalPoints);
 
-  window.updateAssignmentTotalPoints();
-};
+  updateAssignmentTotalPoints();
+}
 
 async function showAssignmentForm(assignment = null, courseId = null) {
   const content = document.getElementById('pageContent');
@@ -857,7 +889,7 @@ async function showAssignmentForm(assignment = null, courseId = null) {
     </div>
   `;
   UI.createRTE('assignmentDescription');
-  window.toggleTeacherAssignmentType = (select) => {
+  const toggleTeacherAssignmentType = (select) => {
     const container = select.parentElement.parentElement.parentElement.querySelector('.q-type-ext');
     if (select.value === 'file') {
       container.innerHTML = `<label>Allowed Extensions (comma-separated):</label><input type="text" class="q-ext" placeholder=".pdf, .docx, .csv, .jpg" value="">`;
@@ -865,7 +897,7 @@ async function showAssignmentForm(assignment = null, courseId = null) {
       container.innerHTML = '';
     }
   };
-  if (isEdit && assignment.questions) { assignment.questions.forEach(q => window.addQuestionField(q)); }
+  if (isEdit && assignment.questions) { assignment.questions.forEach(q => addQuestionField(q)); }
   updateACPreview();
 
   UI.createFileUploader('assignAttachmentUploader', {
@@ -884,7 +916,7 @@ async function showAssignmentForm(assignment = null, courseId = null) {
       }
   });
 
-  window.addAssignmentLink = () => {
+  const addAssignmentLink = () => {
       const label = document.getElementById('attLinkLabel').value.trim();
       const url = document.getElementById('attLinkUrl').value.trim();
       if (!url) return UI.showNotification('URL required', 'warn');
@@ -978,7 +1010,7 @@ async function showAssignmentForm(assignment = null, courseId = null) {
 }
 async function editAssignment(id) { const user = await SessionManager.getCurrentUser(); const { data: assignments } = await SupabaseDB.getAssignments(user.email, null, null); const assignment = assignments.find(a => a.id === id); if (assignment) showAssignmentForm(assignment); }
 async function deleteAssignmentById(id, courseId = null) {
-  if (confirm('Are you sure you want to delete this assignment?')) {
+  if (await UI.confirm('Are you sure you want to delete this assignment?', 'Delete Assignment')) {
     try {
       await SupabaseDB.deleteAssignment(id);
       UI.showNotification('Assignment deleted', 'success');
@@ -1158,14 +1190,16 @@ async function gradeSubmission(assignmentId, studentEmail) {
   }
 }
 async function renderDiscussions() {
-
+  const renderId = ++window.currentRenderId;
   const container = document.getElementById('pageContent');
   if (!container) return;
   clearActiveCountdowns();
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const { data: courses } = await SupabaseDB.getCourses(user.email, null);
+    if (renderId !== window.currentRenderId) return;
 
     container.innerHTML = `
     <div class="card">
@@ -1192,59 +1226,38 @@ async function renderDiscussions() {
 }
 
 async function viewCourseDiscussions(courseId) {
-  const user = await SessionManager.getCurrentUser();
-  const { data: disc } = await SupabaseDB.getDiscussions(courseId);
-  const container = document.getElementById('pageContent');
-  if (!container) return;
+  try {
+    const user = await SessionManager.getCurrentUser();
+    const { data: disc } = await SupabaseDB.getDiscussions(courseId);
+    const container = document.getElementById('pageContent');
+    if (!container) return;
 
-  container.innerHTML = `<button class="button secondary w-auto mb-10" onclick="renderDiscussions()">← Back</button><div id="discussionArea"></div>`;
+    container.innerHTML = `<button class="button secondary w-auto mb-10" onclick="renderDiscussions()">← Back</button><div id="discussionArea"></div>`;
 
-  UI.renderDiscussion('discussionArea', disc, user.email, {
-      onPost: async (content, parentId) => {
-          if (await DiscussionManager.post(courseId, content, parentId)) viewCourseDiscussions(courseId);
-      },
-      onEdit: (id) => DiscussionManager.edit(id, async (id, content) => {
-          const { data: disc } = await SupabaseDB.getDiscussions(courseId);
-          const existing = disc.find(d => d.id === id);
-          await SupabaseDB.saveDiscussion({ ...existing, content });
-          viewCourseDiscussions(courseId);
-          return true;
-      }),
-      onDelete: (id) => DiscussionManager.delete(id, () => viewCourseDiscussions(courseId))
-  });
+    UI.renderDiscussion('discussionArea', disc, user.email, {
+        onPost: async (content, parentId) => {
+            if (await DiscussionManager.post(courseId, content, parentId)) viewCourseDiscussions(courseId);
+        },
+        onEdit: (id) => DiscussionManager.edit(id, async (id, content) => {
+            const { data: disc } = await SupabaseDB.getDiscussions(courseId);
+            const existing = disc.find(d => d.id === id);
+            await SupabaseDB.saveDiscussion({ ...existing, content });
+            viewCourseDiscussions(courseId);
+            return true;
+        }),
+        onDelete: (id) => DiscussionManager.delete(id, () => viewCourseDiscussions(courseId))
+    });
+  } catch (e) {
+    UI.showNotification('Error loading discussions: ' + e.message, 'error');
+  }
 }
-window.showCourseForm = showCourseForm;
-window.editCourse = editCourse;
-window.deleteCourseById = deleteCourseById;
-window.showLessonForm = showLessonForm;
-window.editLesson = editLesson;
-window.deleteLessonById = deleteLessonById;
-window.showAssignmentForm = showAssignmentForm;
-window.editAssignment = editAssignment;
-window.deleteAssignmentById = deleteAssignmentById;
-window.gradeSubmission = gradeSubmission;
-window.viewCourseDiscussions = viewCourseDiscussions;
-window.showQuizForm = showQuizForm;
-window.editQuiz = editQuiz;
-window.deleteQuizById = deleteQuizById;
-window.viewQuizResults = viewQuizResults;
-window.renderDashboard = renderDashboard;
-window.renderCourses = renderCourses;
-window.renderAssignments = renderAssignments;
-window.renderMaterials = renderMaterials;
-window.renderGrading = renderGrading;
-window.renderStudents = renderStudents;
-window.renderDiscussions = renderDiscussions;
-window.renderQuizzes = renderQuizzes;
-window.renderLiveClasses = renderLiveClasses;
-window.showCertForm = showCertForm;
-window.issueCert = issueCert;
-window.renderCalendar = renderCalendar;
 
 async function renderHelp() {
+  const renderId = ++window.currentRenderId;
   clearActiveCountdowns();
   const content = document.getElementById('pageContent');
   if (!content) return;
+  if (renderId !== window.currentRenderId) return;
 
   content.innerHTML = `
     <div class="flex-between mb-20">
@@ -1254,17 +1267,18 @@ async function renderHelp() {
   `;
   HelpSystem.renderHelpCenter('helpContainer', 'teacher');
 }
-window.renderHelp = renderHelp;
 
 async function renderAntiCheat() {
-
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
   clearActiveCountdowns();
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const { data: summary } = await SupabaseDB.getViolationSummary(user.email);
+    if (renderId !== window.currentRenderId) return;
 
     content.innerHTML = `
       <div class="card flex-between">
@@ -1424,11 +1438,6 @@ async function clearStudentViolations(assessmentId, studentEmail, title) {
     }
 }
 
-window.clearStudentViolations = clearStudentViolations;
-window.viewAssessmentViolations = viewAssessmentViolations;
-window.viewStudentIntegrityReport = viewStudentIntegrityReport;
-window.renderAntiCheat = renderAntiCheat;
-
 function openAntiCheatModal(type) {
     const input = document.getElementById('antiCheatConfigData');
     const currentConfig = JSON.parse(input.value || '{}');
@@ -1537,28 +1546,27 @@ function updateACPreview() {
     }
 }
 
-window.openAntiCheatModal = openAntiCheatModal;
-window.updateACPreview = updateACPreview;
-
 async function renderSettings() {
+    const renderId = ++window.currentRenderId;
+    if (renderId !== window.currentRenderId) return;
     SettingsManager.render('Enable real-time desktop notifications for student submissions and system alerts.');
 }
 
-window.renderSettings = renderSettings;
-
 async function renderLiveClasses() {
-
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
   clearActiveCountdowns();
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const now = TimerManager.getTime();
     const [{ data: liveClasses }, { data: courses }] = await Promise.all([
       SupabaseDB.getLiveClasses(null, user.email, null),
       SupabaseDB.getCourses(user.email, null)
     ]);
+    if (renderId !== window.currentRenderId) return;
 
     const activeClass = liveClasses.find(liveClass => liveClass.status === 'live');
 
@@ -1637,10 +1645,13 @@ async function renderLiveClasses() {
 }
 
 async function loadAndEditLiveClass(id) {
+  try {
     const liveClass = await SupabaseDB.getLiveClass(id);
     if (liveClass) showLiveClassForm(liveClass);
+  } catch (e) {
+    UI.showNotification('Error loading live class: ' + e.message, 'error');
+  }
 }
-window.loadAndEditLiveClass = loadAndEditLiveClass;
 
 async function showLiveClassForm(liveClass = null) {
   const isEdit = !!liveClass;
@@ -1778,23 +1789,23 @@ let jitsiAPI = null;
 let liveClassTimer = null;
 
 function startLiveClassTimer(id, endAt) {
-    window._warnedEnd = false;
+    _warnedEnd = false;
     const endTime = new Date(endAt).getTime();
 
     liveClassTimer = Countdown.create(null, {
         targetDate: endTime,
         referenceDate: liveClassTimer?.referenceDate || TimerManager.getTime(),
         headless: true,
-        onEnd: () => {
-            if (confirm('Scheduled class time has reached. Do you want to extend by 15 minutes? Press Cancel to end class.')) {
+        onEnd: async () => {
+            if (await UI.confirm('Scheduled class time has reached. Do you want to extend by 15 minutes? Press Cancel to end class.', 'Class Time Reached')) {
                 extendLiveClass(id, 15);
             } else {
                 stopLiveClass(id);
             }
         },
         onTick: (time) => {
-            if (time.total <= 5 * 60 * 1000 && !window._warnedEnd && time.total > 0) {
-                window._warnedEnd = true;
+            if (time.total <= 5 * 60 * 1000 && !_warnedEnd && time.total > 0) {
+                _warnedEnd = true;
                 UI.showNotification('Class ends in 5 minutes', 'warn');
             }
         }
@@ -1856,7 +1867,6 @@ async function handleStartLiveClass(id, roomName, meetingUrl) {
         startTeacherLiveClass(id, roomName);
     }
 }
-window.handleStartLiveClass = handleStartLiveClass;
 
 async function startTeacherLiveClass(id, roomName) {
   const user = await SessionManager.getCurrentUser();
@@ -1953,7 +1963,7 @@ async function startTeacherLiveClass(id, roomName) {
 }
 
 async function stopLiveClass(id) {
-    if (confirm('Are you sure you want to stop the class? This will disconnect all participants.')) {
+    if (await UI.confirm('Are you sure you want to stop the class? This will disconnect all participants.', 'Stop Class')) {
         if (liveClassTimer instanceof Countdown) {
             liveClassTimer.destroy();
             liveClassTimer = null;
@@ -2007,9 +2017,6 @@ async function extendLiveClass(id, minutes) {
     }
 }
 
-window.stopLiveClass = stopLiveClass;
-window.extendLiveClass = extendLiveClass;
-
 function teacherModAction(action) {
     if (!jitsiAPI) return;
     switch(action) {
@@ -2028,12 +2035,15 @@ function teacherModAction(action) {
     }
 }
 
-window.teacherModAction = teacherModAction;
-
 async function deleteLiveClass(id) {
-  if (confirm('Cancel this class?')) {
-    await SupabaseDB.deleteLiveClass(id);
-    renderLiveClasses();
+  if (await UI.confirm('Are you sure you want to cancel and delete this class?', 'Cancel Class')) {
+    try {
+      await SupabaseDB.deleteLiveClass(id);
+      UI.showNotification('Live class deleted', 'success');
+      renderLiveClasses();
+    } catch (e) {
+      UI.showNotification('Error deleting live class: ' + e.message, 'error');
+    }
   }
 }
 
@@ -2082,24 +2092,21 @@ async function viewAttendance(classId) {
   }
 }
 
-window.showLiveClassForm = showLiveClassForm;
-window.startTeacherLiveClass = startTeacherLiveClass;
-window.deleteLiveClass = deleteLiveClass;
-window.viewAttendance = viewAttendance;
-window.renderLiveClasses = renderLiveClasses;
-
 async function renderQuizzes() {
+  const renderId = ++window.currentRenderId;
   const container = document.getElementById('pageContent');
   if (!container) return;
   clearActiveCountdowns();
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const now = TimerManager.getTime();
     const [{ data: quizzes }, { data: courses }] = await Promise.all([
       SupabaseDB.getQuizzes(null, user.email, null),
       SupabaseDB.getCourses(user.email, null)
     ]);
+    if (renderId !== window.currentRenderId) return;
     container.innerHTML = `
     <div class="card flex-between">
       <h2 class="m-0">Quizzes</h2>
@@ -2218,7 +2225,7 @@ async function showQuizForm(quiz = null) {
     </div>
   `;
   UI.createRTE('quizDesc');
-  window.addQuizQuestionField = (q = null) => {
+  function addQuizQuestionField(q = null) {
     const container = document.getElementById('quizQuestionsContainer');
     if (!container) return;
     const div = document.createElement('div');
@@ -2227,7 +2234,7 @@ async function showQuizForm(quiz = null) {
     div.innerHTML = `
       <div class="flex-between mb-15">
         <h4 class="m-0">Quiz Question</h4>
-        <button type="button" class="button danger small w-auto" onclick="this.closest('.question').remove(); window.updateQuizTotalPoints();">Remove Question</button>
+        <button type="button" class="button danger small w-auto" onclick="this.closest('.question').remove(); updateQuizTotalPoints();">Remove Question</button>
       </div>
       <div class="mb-10">
         <label class="bold">Question Text:</label>
@@ -2259,30 +2266,30 @@ async function showQuizForm(quiz = null) {
     `;
     container.appendChild(div);
     UI.createRTE(qId, { minHeight: '60px' });
-    div.querySelector('.q-points').addEventListener('input', window.updateQuizTotalPoints);
-    div.querySelector('.q-points').addEventListener('change', window.updateQuizTotalPoints);
-    window.updateQuizTotalPoints();
-  };
+    div.querySelector('.q-points').addEventListener('input', updateQuizTotalPoints);
+    div.querySelector('.q-points').addEventListener('change', updateQuizTotalPoints);
+    updateQuizTotalPoints();
+  }
 
-  window.updateQuizTotalPoints = () => {
+  function updateQuizTotalPoints() {
     const total = Array.from(document.querySelectorAll('#quizQuestionsContainer .q-points'))
         .reduce((sum, input) => sum + (parseFloat(input.value) || 0), 0);
     const pointsInput = document.getElementById('quizTotalPoints');
     if (pointsInput) pointsInput.value = total;
-  };
+  }
   updateACPreview();
-  window.renderQuizOptions = (q) => {
+  const renderQuizOptions = (q) => {
     if (q?.type === 'tf') return `<select class="q-correct"><option value="True" ${q.correct === 'True' ? 'selected' : ''}>True</option><option value="False" ${q.correct === 'False' ? 'selected' : ''}>False</option></select>`;
     if (q?.type === 'short') return `<input type="text" class="q-correct" placeholder="Correct Answer (Exact Match)" value="${q.correct || ''}">`;
     const id = Date.now() + Math.random();
     return `<div class="mcq-options">${(q?.options || ['','','','']).map((opt, i) => `<div>Option ${i+1}: <input type="text" class="opt-val" value="${escapeHtml(opt)}"> <input type="radio" name="correct-${id}" ${q?.correct === i.toString() ? 'checked' : ''} value="${i}"> Correct</div>`).join('')}</div>`;
   };
-  window.toggleQuizOptions = (select) => {
+  const toggleQuizOptions = (select) => {
     const qItem = select.closest('.question');
     const container = qItem.querySelector('.q-options');
     if (container) container.innerHTML = renderQuizOptions({ type: select.value });
   };
-  window.shuffleQuizQuestions = () => {
+  const shuffleQuizQuestions = () => {
     const container = document.getElementById('quizQuestionsContainer');
     const items = Array.from(container.children);
     for (let i = items.length - 1; i > 0; i--) {
@@ -2384,7 +2391,7 @@ async function showQuizForm(quiz = null) {
     }
   }
 
-  if (isEdit && quiz.questions) { quiz.questions.forEach(q => window.addQuizQuestionField(q)); }
+  if (isEdit && quiz.questions) { quiz.questions.forEach(q => addQuizQuestionField(q)); }
   document.getElementById('quizForm').addEventListener('submit', handleQuizSave);
 }
 
@@ -2396,7 +2403,7 @@ async function editQuiz(id) {
 }
 
 async function deleteQuizById(id) {
-  if (confirm('Are you sure you want to delete this quiz?')) {
+  if (await UI.confirm('Are you sure you want to delete this quiz?', 'Delete Quiz')) {
     try {
       await SupabaseDB.deleteQuiz(id);
       UI.showNotification('Quiz deleted successfully', 'success');
@@ -2411,43 +2418,48 @@ async function viewQuizResults(quizId) {
   // Authoritative reconciliation before viewing results
   try { await SupabaseDB.reconcileQuizAttempts(quizId); } catch(e) { console.warn('Reconciliation failed:', e); }
 
-  const [{ data: subs }, quiz] = await Promise.all([
-    SupabaseDB.getQuizSubmissions(quizId),
-    SupabaseDB.getQuiz(quizId)
-  ]);
-  const container = document.getElementById('pageContent');
-  if (!container) return;
+  try {
+    const [{ data: subs }, quiz] = await Promise.all([
+      SupabaseDB.getQuizSubmissions(quizId),
+      SupabaseDB.getQuiz(quizId)
+    ]);
+    const container = document.getElementById('pageContent');
+    if (!container) return;
 
-  container.innerHTML = `
-    <button class="button secondary w-auto mb-10" onclick="renderQuizzes()">← Back</button>
-    <div class="card">
-      <h2 class="m-0">Results for: ${escapeHtml(quiz.title)}</h2>
-      <div class="p-0 mt-15" style="overflow-x:auto">
-          <table>
-            <thead><tr><th>Student</th><th>Score</th><th>Points</th><th>Submitted</th><th>Action</th></tr></thead>
-            <tbody>
-              ${subs.filter(s => s.status === 'submitted' || s.status === 'in-progress').map(s => `
-                <tr>
-                  <td>${escapeHtml(s.student_email)}</td>
-                  <td>${s.status === 'submitted' ? (s.score !== null ? s.score + '%' : '<span class="warning-text bold">Pending</span>') : '<span class="badge badge-warn">In Progress</span>'}</td>
-                  <td>${s.total_points || 0}</td>
-                  <td>${s.submitted_at ? new Date(s.submitted_at).toLocaleString() : '---'}</td>
-                  <td><button class="button small w-auto" ${s.status === 'in-progress' ? 'disabled' : ''} onclick="gradeQuizSubmission('${s.id}', '${quizId}')">Grade/View</button></td>
-                </tr>
-              `).join('') || '<tr><td colspan="5" class="empty">No submissions yet.</td></tr>'}
-            </tbody>
-          </table>
+    container.innerHTML = `
+      <button class="button secondary w-auto mb-10" onclick="renderQuizzes()">← Back</button>
+      <div class="card">
+        <h2 class="m-0">Results for: ${escapeHtml(quiz.title)}</h2>
+        <div class="p-0 mt-15" style="overflow-x:auto">
+            <table>
+              <thead><tr><th>Student</th><th>Score</th><th>Points</th><th>Submitted</th><th>Action</th></tr></thead>
+              <tbody>
+                ${subs.filter(s => s.status === 'submitted' || s.status === 'in-progress').map(s => `
+                  <tr>
+                    <td>${escapeHtml(s.student_email)}</td>
+                    <td>${s.status === 'submitted' ? (s.score !== null ? s.score + '%' : '<span class="warning-text bold">Pending</span>') : '<span class="badge badge-warn">In Progress</span>'}</td>
+                    <td>${s.total_points || 0}</td>
+                    <td>${s.submitted_at ? new Date(s.submitted_at).toLocaleString() : '---'}</td>
+                    <td><button class="button small w-auto" ${s.status === 'in-progress' ? 'disabled' : ''} onclick="gradeQuizSubmission('${s.id}', '${quizId}')">Grade/View</button></td>
+                  </tr>
+                `).join('') || '<tr><td colspan="5" class="empty">No submissions yet.</td></tr>'}
+              </tbody>
+            </table>
+        </div>
       </div>
-    </div>
-  `;
+    `;
+  } catch (e) {
+    UI.showNotification('Error loading quiz results: ' + e.message, 'error');
+  }
 }
 
 async function gradeQuizSubmission(submissionId, quizId) {
-  const [quiz, submission] = await Promise.all([
-    SupabaseDB.getQuiz(quizId),
-    SupabaseDB.getQuizSubmissionById(submissionId)
-  ]);
-  const container = document.getElementById('pageContent');
+  try {
+    const [quiz, submission] = await Promise.all([
+      SupabaseDB.getQuiz(quizId),
+      SupabaseDB.getQuizSubmissionById(submissionId)
+    ]);
+    const container = document.getElementById('pageContent');
   if (!container) return;
 
   const durationMin = Math.floor((submission.time_spent || 0) / 60);
@@ -2537,6 +2549,10 @@ async function gradeQuizSubmission(submissionId, quizId) {
       </form>
     </div>
   `;
+  } catch (e) {
+    UI.showNotification('Error loading quiz submission: ' + e.message, 'error');
+    return;
+  }
 
   const finalScoreInput = document.getElementById('finalQuizScore');
 
@@ -2628,15 +2644,15 @@ async function gradeQuizSubmission(submissionId, quizId) {
   });
 }
 
-window.gradeQuizSubmission = gradeQuizSubmission;
-
 async function renderGradeBook() {
+    const renderId = ++window.currentRenderId;
     const content = document.getElementById('pageContent');
     if (!content) return;
     clearActiveCountdowns();
 
     try {
         const user = await SessionManager.getCurrentUser();
+        if (renderId !== window.currentRenderId) return;
         const [{ data: courses }, { data: assignments }, { data: quizzes }, { data: submissions }, { data: quizSubs }] = await Promise.all([
             SupabaseDB.getCourses(user.email, null),
             SupabaseDB.getAssignments(user.email, null, null),
@@ -2644,6 +2660,7 @@ async function renderGradeBook() {
             SupabaseDB.getSubmissions(null, null, user.email),
             SupabaseDB.getQuizSubmissions(null, null, user.email)
         ]);
+        if (renderId !== window.currentRenderId) return;
 
         content.innerHTML = `
             <div class="card flex-between">
@@ -2660,7 +2677,7 @@ async function renderGradeBook() {
             <div id="gradeBookArea" class="mt-20"></div>
         `;
 
-        window.filterGradeBook = async () => {
+        const filterGradeBook = async () => {
             const courseId = document.getElementById('gbCourseSelect').value;
             const area = document.getElementById('gradeBookArea');
 
@@ -2669,7 +2686,7 @@ async function renderGradeBook() {
 
             const { data: enrollments } = await SupabaseDB.getEnrollmentsByCourses(courseIds);
 
-            window.currentGradeBookData = { filteredCourses, enrollments, assignments, quizzes, submissions, quizSubs };
+            currentGradeBookData = { filteredCourses, enrollments, assignments, quizzes, submissions, quizSubs };
 
             let html = '';
 
@@ -2753,6 +2770,7 @@ async function renderGradeBook() {
             }
             area.innerHTML = html || '<div class="empty">No data available.</div>';
         };
+        window.filterGradeBook = filterGradeBook;
 
         filterGradeBook();
     } catch (error) {
@@ -2761,8 +2779,8 @@ async function renderGradeBook() {
     }
 }
 
-window.exportGradeBook = async (type) => {
-    const data = window.currentGradeBookData;
+async function exportGradeBook(type) {
+    const data = currentGradeBookData;
     if (!data) return UI.showNotification('No data to export', 'warn');
 
     const { filteredCourses, enrollments, assignments, quizzes, submissions, quizSubs } = data;
@@ -2823,9 +2841,7 @@ window.exportGradeBook = async (type) => {
     } else {
         await Exporter.pdf('gradebook_export.pdf', 'Detailed Grade Book Report', allHeaders, allRows);
     }
-};
-
-window.renderGradeBook = renderGradeBook;
+}
 
 function initNav() {
   const teacherNav = document.getElementById('teacherNav');
@@ -2856,19 +2872,22 @@ function initNav() {
 
 
 async function renderMaterials() {
-
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
   clearActiveCountdowns();
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const { data: courses } = await SupabaseDB.getCourses(user.email, null);
+    if (renderId !== window.currentRenderId) return;
 
     const courseIds = (courses || []).map(c => c.id);
     let materials = [];
     if (courseIds.length > 0) {
         const materialsRes = await SupabaseDB.getMaterials(null, courseIds);
+        if (renderId !== window.currentRenderId) return;
         materials = materialsRes.data || [];
     }
 
@@ -2987,7 +3006,7 @@ async function saveMaterial() {
 }
 
 async function deleteMaterial(id) {
-  if (confirm('Are you sure you want to delete this material?')) {
+  if (await UI.confirm('Are you sure you want to delete this material?', 'Delete Material')) {
     try {
       await SupabaseDB.deleteMaterial(id);
       UI.showNotification('Material deleted', 'success');
@@ -2998,9 +3017,84 @@ async function deleteMaterial(id) {
   }
 }
 
+// Consolidate global window assignments
+window.toggleTeacherAssignmentType = (select) => {
+    const container = select.parentElement.parentElement.parentElement.querySelector('.q-type-ext');
+    if (select.value === 'file') {
+      container.innerHTML = `<label>Allowed Extensions (comma-separated):</label><input type="text" class="q-ext" placeholder=".pdf, .docx, .csv, .jpg" value="">`;
+    } else {
+      container.innerHTML = '';
+    }
+};
+window.addAssignmentLink = () => {
+    const label = document.getElementById('attLinkLabel').value.trim();
+    const url = document.getElementById('attLinkUrl').value.trim();
+    if (!url) return UI.showNotification('URL required', 'warn');
+    if (!isValidUrl(url)) return UI.showNotification('Please enter a valid URL (starting with http:// or https://)', 'error');
+
+    const container = document.getElementById('attachmentsContainer');
+    const div = document.createElement('div');
+    div.className = 'flex-between list-item mb-5';
+    div.innerHTML = `
+      <span class="small">${escapeHtml(label || url)}</span>
+      <button type="button" class="button danger tiny w-auto" onclick="this.parentElement.remove()">Remove</button>
+      <input type="hidden" class="att-data" value='${JSON.stringify({ name: label || url, url, type: 'link' })}'>
+    `;
+    container.appendChild(div);
+    document.getElementById('attLinkLabel').value = '';
+    document.getElementById('attLinkUrl').value = '';
+};
+window.showCourseForm = showCourseForm;
+window.editCourse = editCourse;
+window.deleteCourseById = deleteCourseById;
+window.showLessonForm = showLessonForm;
+window.editLesson = editLesson;
+window.deleteLessonById = deleteLessonById;
+window.showAssignmentForm = showAssignmentForm;
+window.editAssignment = editAssignment;
+window.deleteAssignmentById = deleteAssignmentById;
+window.gradeSubmission = gradeSubmission;
+window.viewCourseDiscussions = viewCourseDiscussions;
+window.showQuizForm = showQuizForm;
+window.editQuiz = editQuiz;
+window.deleteQuizById = deleteQuizById;
+window.viewQuizResults = viewQuizResults;
+window.gradeQuizSubmission = gradeQuizSubmission;
+window.renderDashboard = renderDashboard;
+window.renderCourses = renderCourses;
+window.renderAssignments = renderAssignments;
+window.renderMaterials = renderMaterials;
+window.renderGrading = renderGrading;
+window.renderStudents = renderStudents;
+window.renderDiscussions = renderDiscussions;
+window.renderQuizzes = renderQuizzes;
+window.renderLiveClasses = renderLiveClasses;
+window.renderGradeBook = renderGradeBook;
+window.renderCalendar = renderCalendar;
+window.renderHelp = renderHelp;
+window.renderAntiCheat = renderAntiCheat;
+window.renderSettings = renderSettings;
+window.showCertForm = showCertForm;
+window.issueCert = issueCert;
+window.unenrollStudent = unenrollStudent;
+window.loadAndEditCourse = loadAndEditCourse;
+window.loadAndEditLiveClass = loadAndEditLiveClass;
+window.handleStartLiveClass = handleStartLiveClass;
+window.stopLiveClass = stopLiveClass;
+window.extendLiveClass = extendLiveClass;
+window.teacherModAction = teacherModAction;
+window.showLiveClassForm = showLiveClassForm;
+window.startTeacherLiveClass = startTeacherLiveClass;
+window.deleteLiveClass = deleteLiveClass;
+window.viewAttendance = viewAttendance;
 window.saveMaterial = saveMaterial;
 window.deleteMaterial = deleteMaterial;
 window.showMaterialForm = showMaterialForm;
+window.openAntiCheatModal = openAntiCheatModal;
+window.updateACPreview = updateACPreview;
+window.clearStudentViolations = clearStudentViolations;
+window.viewAssessmentViolations = viewAssessmentViolations;
+window.viewStudentIntegrityReport = viewStudentIntegrityReport;
 
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await initDashboard('teacher');

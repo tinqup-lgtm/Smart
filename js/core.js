@@ -1,4 +1,6 @@
 // Global Utilities
+window.currentRenderId = 0;
+
 window.isAccountLocked = function(user) {
     return !!(user && user.locked_until && Date.now() < new Date(user.locked_until).getTime());
 };
