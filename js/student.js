@@ -56,6 +56,7 @@ async function _getDueSoonCount(email) {
 window._getDueSoonCount = _getDueSoonCount;
 
 async function renderCourses() {
+  const renderId = ++window.currentRenderId;
   const container = document.getElementById('pageContent');
   if (!container) return;
   clearActiveCountdowns();
@@ -64,10 +65,12 @@ async function renderCourses() {
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const [{ data: courses }, enrollRes] = await Promise.all([
       SupabaseDB.getCourses(null, 'published', { searchTerm }),
       SupabaseDB.getEnrollments(user.email)
     ]);
+    if (renderId !== window.currentRenderId) return;
     const enrollments = enrollRes.data || [];
 
     container.innerHTML = `
@@ -125,16 +128,19 @@ function displayCatalog(courses) {
 
 
 async function renderMyCourses() {
+  const renderId = ++window.currentRenderId;
   clearActiveCountdowns();
   const container = document.getElementById('pageContent');
   if (!container) return;
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const [{ data: myCourses }, enrollRes] = await Promise.all([
       SupabaseDB.getEnrolledCourses(user.email),
       SupabaseDB.getEnrollments(user.email)
     ]);
+    if (renderId !== window.currentRenderId) return;
     const enrollments = enrollRes.data || [];
 
     container.innerHTML = `
@@ -215,11 +221,13 @@ async function enroll(courseId) {
   }
 }
 async function viewCourse(courseId, fromMyCourses = false) {
-
+  const renderId = ++window.currentRenderId;
   // Ensure any active study session is stopped if navigating to course view
   if (studyInterval) await stopStudySession();
 
+  try {
   const course = await SupabaseDB.getCourse(courseId);
+  if (renderId !== window.currentRenderId) return;
   if (!course || course.status !== 'published') {
       UI.showNotification('This course is not available.', 'warn');
       if (fromMyCourses) renderMyCourses(); else renderCourses();
@@ -231,6 +239,7 @@ async function viewCourse(courseId, fromMyCourses = false) {
       SupabaseDB.getLessons(courseId),
       SupabaseDB.getAssignments(null, courseId, null)
   ]);
+  if (renderId !== window.currentRenderId) return;
   const topics = topicRes.data || [];
   const lessons = lessonRes.data || [];
   const courseAssignments = (allCourseAssignments || []).filter(a => a.status === 'published');
@@ -300,10 +309,23 @@ async function viewCourse(courseId, fromMyCourses = false) {
         </div>
       </section>
     </div>`;
+  } catch (error) {
+    console.error('View course error:', error);
+    const container = document.getElementById('pageContent');
+    if (container) {
+        container.innerHTML = `<div class="stat-card danger">
+          <h3>Error Loading Course</h3>
+          <div class="small danger-text">${escapeHtml(error.message)}</div>
+          <button class="button w-auto mt-10" onclick="viewCourse('${escapeAttr(courseId)}', ${fromMyCourses})">Retry</button>
+        </div>`;
+    }
+  }
 }
 async function showLesson(lessonId, courseId, fromMyCourses = false) {
-
+  const renderId = ++window.currentRenderId;
+  try {
   const lessonRes = await SupabaseDB.getLessons(courseId);
+  if (renderId !== window.currentRenderId) return;
   const lessons = lessonRes.data || [];
   const lesson = lessons.find(l => l.id === lessonId);
   const container = document.getElementById('pageContent');
@@ -339,6 +361,17 @@ async function showLesson(lessonId, courseId, fromMyCourses = false) {
       ${videoHtml}
       <div class="mt-20" style="line-height:1.6">${UI.renderRichText(lesson.content)}</div>
     </div>`;
+  } catch (error) {
+    console.error('Show lesson error:', error);
+    const container = document.getElementById('pageContent');
+    if (container) {
+      container.innerHTML = `<div class="stat-card danger">
+        <h3>Error Loading Lesson</h3>
+        <div class="small danger-text">${escapeHtml(error.message)}</div>
+        <button class="button w-auto mt-10" onclick="showLesson('${escapeAttr(lessonId)}', '${escapeAttr(courseId)}', ${fromMyCourses})">Retry</button>
+      </div>`;
+    }
+  }
 }
 
 async function stopAndNavigateToViewCourse(courseId, fromMyCourses) {
@@ -347,15 +380,18 @@ async function stopAndNavigateToViewCourse(courseId, fromMyCourses) {
 }
 window.stopAndNavigateToViewCourse = stopAndNavigateToViewCourse;
 async function renderAssignments(openId = null){
+  const renderId = ++window.currentRenderId;
   const container = document.getElementById('pageContent');
   if (!container) return;
   clearActiveCountdowns();
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     if(!user || user.role!=='student'){ UI.showNotification('Login as student'); window.location.href='index.html'; return; }
 
     const enrollRes = await SupabaseDB.getEnrollments(user.email);
+    if (renderId !== window.currentRenderId) return;
     const enrollments = enrollRes.data || [];
     const enrolledCourseIds = enrollments.map(e => e.course_id);
 
@@ -364,6 +400,7 @@ async function renderAssignments(openId = null){
       SupabaseDB.getAssignments(null, null, enrolledCourseIds),
       SupabaseDB.getSubmissions(null, user.email, null)
     ]);
+    if (renderId !== window.currentRenderId) return;
 
     const now = TimerManager.getTime();
 
@@ -612,13 +649,16 @@ window.previewFile = function(input, idx) {
 };
 
 async function viewFeedback(assignmentId) {
+  const renderId = ++window.currentRenderId;
   const user = await SessionManager.getCurrentUser();
+  try {
   const [assignment, submission] = await Promise.all([
     SupabaseDB.getAssignment(assignmentId),
     SupabaseDB.getSubmission(assignmentId, user.email)
   ]);
+  if (renderId !== window.currentRenderId) return;
 
-  const now = Date.now();
+  const now = TimerManager.getTime();
   if (assignment.start_at && new Date(assignment.start_at).getTime() > now) {
       UI.showNotification('This assignment is not available yet.');
       return;
@@ -699,11 +739,22 @@ async function viewFeedback(assignmentId) {
 
     </div>
   `;
+  } catch (error) {
+    console.error('View feedback error:', error);
+    const container = document.getElementById('pageContent');
+    if (container) {
+      container.innerHTML = `<div class="stat-card danger">
+        <h3>Error Loading Feedback</h3>
+        <div class="small danger-text">${escapeHtml(error.message)}</div>
+        <button class="button w-auto mt-10" onclick="viewFeedback('${escapeAttr(assignmentId)}')">Retry</button>
+      </div>`;
+    }
+  }
 }
 
 
 async function renderDashboardOverview() {
-
+  const renderId = ++window.currentRenderId;
   NotificationManager.init();
   clearActiveCountdowns();
   const container = document.getElementById('pageContent');
@@ -711,12 +762,14 @@ async function renderDashboardOverview() {
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
 
     const [enrollRes, gradedCount, violationsCount] = await Promise.all([
       SupabaseDB.getEnrollments(user.email),
       SupabaseDB.getCount('submissions', q => q.eq('student_email', user.email).eq('status', 'graded')),
       SupabaseDB.getCount('violations', q => q.eq('user_email', user.email))
     ]);
+    if (renderId !== window.currentRenderId) return;
     const enrollments = enrollRes.data || [];
 
     const enrolledCourseIds = enrollments.map(e => e.course_id);
@@ -725,6 +778,7 @@ async function renderDashboardOverview() {
         SupabaseDB.getAssignments(null, null, enrolledCourseIds),
         SupabaseDB.getSubmissions(null, user.email, null)
     ]);
+    if (renderId !== window.currentRenderId) return;
 
     updateHeaderStats().catch(e => console.warn('Header stats error:', e));
     const now = TimerManager.getTime();
@@ -788,18 +842,20 @@ async function renderDashboardOverview() {
 }
 
 async function renderProgress() {
-
+  const renderId = ++window.currentRenderId;
   clearActiveCountdowns();
   const container = document.getElementById('pageContent');
   if (!container) return;
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const [sessionsRes, enrollRes, { data: courses }] = await Promise.all([
       SupabaseDB.getStudySessions(user.email),
       SupabaseDB.getEnrollments(user.email),
       SupabaseDB.getCourses(null, null)
     ]);
+    if (renderId !== window.currentRenderId) return;
     const sessions = sessionsRes.data || [];
     const enrollments = enrollRes.data || [];
 
@@ -916,19 +972,21 @@ window.startStudySession = startStudySession;
 window.stopStudySession = stopStudySession;
 
 async function renderGrades() {
-
+  const renderId = ++window.currentRenderId;
   clearActiveCountdowns();
   const container = document.getElementById('pageContent');
   if (!container) return;
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const now = TimerManager.getTime();
     // Optimization: Filter graded status on the server
     const [{ data: submissions }, { data: assigns }] = await Promise.all([
       SupabaseDB.getSubmissions(null, user.email, null, { status: 'graded' }),
       SupabaseDB.getAssignments(null, null, null)
     ]);
+    if (renderId !== window.currentRenderId) return;
 
     // Sort graded submissions by date
     const graded = submissions.sort((a,b) => new Date(a.submitted_at) - new Date(b.submitted_at));
@@ -978,18 +1036,20 @@ async function renderGrades() {
 }
 
 async function renderAnalytics() {
-
+  const renderId = ++window.currentRenderId;
   clearActiveCountdowns();
   const container = document.getElementById('pageContent');
   if (!container) return;
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     // Optimization: Filter graded status on the server
     const [{ data: submissions }, { data: assigns }] = await Promise.all([
       SupabaseDB.getSubmissions(null, user.email, null, { status: 'graded' }),
       SupabaseDB.getAssignments(null, null, null)
     ]);
+    if (renderId !== window.currentRenderId) return;
 
     // Sort graded submissions by date
     const graded = submissions.sort((a,b) => new Date(a.submitted_at) - new Date(b.submitted_at));
@@ -1061,17 +1121,19 @@ async function renderAnalytics() {
 
 
 async function renderMaterials() {
-
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
   clearActiveCountdowns();
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     // Reconcile any abandoned attempts on load
     try { await SupabaseDB.reconcileQuizAttempts(null, user.email); } catch(e) { console.warn('Reconciliation failed:', e); }
 
     const enrollRes = await SupabaseDB.getEnrollments(user.email);
+    if (renderId !== window.currentRenderId) return;
     const enrollments = enrollRes.data || [];
     const enrolledIds = enrollments.map(e => e.course_id);
 
@@ -1079,6 +1141,7 @@ async function renderMaterials() {
       SupabaseDB.getEnrolledCourses(user.email),
       SupabaseDB.getMaterials(null, enrolledIds)
     ]);
+    if (renderId !== window.currentRenderId) return;
     const myMaterials = materialsRes.data || [];
 
     content.innerHTML = `
@@ -1112,14 +1175,16 @@ async function renderMaterials() {
 }
 
 async function renderDiscussions() {
-
+  const renderId = ++window.currentRenderId;
   clearActiveCountdowns();
   const container = document.getElementById('pageContent');
   if (!container) return;
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const { data: myCourses } = await SupabaseDB.getEnrolledCourses(user.email);
+    if (renderId !== window.currentRenderId) return;
 
   container.innerHTML = `
     <h2 class="m-0">Discussions</h2>
@@ -1139,8 +1204,12 @@ async function renderDiscussions() {
 }
 
 async function viewStudentDiscussions(courseId) {
+  const renderId = ++window.currentRenderId;
+  try {
   const user = await SessionManager.getCurrentUser();
+  if (renderId !== window.currentRenderId) return;
   const { data: disc } = await SupabaseDB.getDiscussions(courseId);
+  if (renderId !== window.currentRenderId) return;
   const container = document.getElementById('pageContent');
   if (!container) return;
 
@@ -1159,6 +1228,16 @@ async function viewStudentDiscussions(courseId) {
       }),
       onDelete: (id) => DiscussionManager.delete(id, () => viewStudentDiscussions(courseId))
   });
+  } catch (error) {
+    console.error('Discussions error:', error);
+    if (container) {
+      container.innerHTML = `<div class="stat-card danger">
+        <h3>Error Loading Discussions</h3>
+        <div class="small danger-text">${escapeHtml(error.message)}</div>
+        <button class="button w-auto mt-10" onclick="viewStudentDiscussions('${escapeAttr(courseId)}')">Retry</button>
+      </div>`;
+    }
+  }
 }
 window.enroll = enroll;
 window.viewCourse = viewCourse;
@@ -1194,14 +1273,16 @@ window.filterCatalog = filterCatalog;
 window.viewStudentDiscussions = viewStudentDiscussions;
 
 async function renderCertificates() {
-
+  const renderId = ++window.currentRenderId;
   clearActiveCountdowns();
   const container = document.getElementById('pageContent');
   if (!container) return;
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const certsRes = await SupabaseDB.getCertificates(user.email);
+    if (renderId !== window.currentRenderId) return;
     const certs = certsRes.data || [];
 
   container.innerHTML = `
@@ -1224,14 +1305,16 @@ async function renderCertificates() {
 }
 
 async function renderPlanner() {
-
+  const renderId = ++window.currentRenderId;
   clearActiveCountdowns();
   const container = document.getElementById('pageContent');
   if (!container) return;
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const itemsRes = await SupabaseDB.getPlannerItems(user.email);
+    if (renderId !== window.currentRenderId) return;
     const items = itemsRes.data || [];
 
     const now = new Date();
@@ -1360,20 +1443,24 @@ async function deletePlannerItem(id) {
 }
 
 async function renderLiveClasses() {
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
   clearActiveCountdowns();
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     // Reconcile any abandoned attempts on load
     try { await SupabaseDB.reconcileQuizAttempts(null, user.email); } catch(e) { console.warn('Reconciliation failed:', e); }
 
     const enrollRes = await SupabaseDB.getEnrollments(user.email);
+    if (renderId !== window.currentRenderId) return;
     const enrollments = enrollRes.data || [];
     const enrolledCourseIds = enrollments.map(e => e.course_id);
 
     const liveRes = await SupabaseDB.getLiveClasses(null, null, enrolledCourseIds);
+    if (renderId !== window.currentRenderId) return;
     const myClasses = liveRes.data || [];
     const now = TimerManager.getTime();
 
@@ -1626,6 +1713,7 @@ window.joinLiveClass = joinLiveClass;
 window.renderLiveClasses = renderLiveClasses;
 
 async function renderHelp() {
+  const renderId = ++window.currentRenderId;
   clearActiveCountdowns();
   const content = document.getElementById('pageContent');
   if (!content) return;
@@ -1640,6 +1728,7 @@ async function renderHelp() {
 }
 
 async function renderSettings() {
+    const renderId = ++window.currentRenderId;
     clearActiveCountdowns();
     SettingsManager.render('Enable real-time desktop notifications for assignment updates, grades, and new course content.');
 }
@@ -1673,14 +1762,16 @@ async function viewStudentAssessmentReport(assessmentId, title) {
 window.viewStudentAssessmentReport = viewStudentAssessmentReport;
 
 async function renderAntiCheat() {
-
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
   clearActiveCountdowns();
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const { data: summary } = await SupabaseDB.getStudentViolationSummary(user.email);
+    if (renderId !== window.currentRenderId) return;
 
     content.innerHTML = `
       <div class="card flex-between">
@@ -1728,16 +1819,19 @@ async function renderAntiCheat() {
 window.renderAntiCheat = renderAntiCheat;
 
 async function renderQuizzes(openId = null) {
+  const renderId = ++window.currentRenderId;
   clearActiveCountdowns();
   const container = document.getElementById('pageContent');
   if (!container) return;
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     // Reconcile any abandoned attempts on load
     try { await SupabaseDB.reconcileQuizAttempts(null, user.email); } catch(e) { console.warn('Reconciliation failed:', e); }
 
     const enrollRes = await SupabaseDB.getEnrollments(user.email);
+    if (renderId !== window.currentRenderId) return;
     const enrollments = enrollRes.data || [];
     const enrolledCourseIds = (enrollments || []).map(e => e.course_id);
 
@@ -1746,6 +1840,7 @@ async function renderQuizzes(openId = null) {
       SupabaseDB.getQuizSubmissions(null, user.email, null),
       SupabaseDB.getEnrolledCourses(user.email)
     ]);
+    if (renderId !== window.currentRenderId) return;
 
     // Only show submissions for quizzes that belong to enrolled courses
     const subs = (allSubs || []).filter(s => enrolledCourseIds.includes(s.quizzes?.course_id));

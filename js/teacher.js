@@ -1249,13 +1249,13 @@ async function renderDiscussions() {
 }
 
 async function viewCourseDiscussions(courseId) {
-  const renderId = window.currentRenderId;
+  const renderId = ++window.currentRenderId;
+  const container = document.getElementById('pageContent');
   try {
     const user = await SessionManager.getCurrentUser();
     if (renderId !== window.currentRenderId) return;
     const { data: disc } = await SupabaseDB.getDiscussions(courseId);
     if (renderId !== window.currentRenderId) return;
-    const container = document.getElementById('pageContent');
     if (!container) return;
 
     container.innerHTML = `<button class="button secondary w-auto mb-10" onclick="renderDiscussions()">← Back</button><div id="discussionArea"></div>`;
@@ -1274,7 +1274,15 @@ async function viewCourseDiscussions(courseId) {
         onDelete: (id) => DiscussionManager.delete(id, () => viewCourseDiscussions(courseId))
     });
   } catch (e) {
+    console.error('Discussions error:', e);
     UI.showNotification('Error loading discussions: ' + e.message, 'error');
+    if (container) {
+        container.innerHTML = `<div class="card danger-border">
+            <h3>Error Loading Discussions</h3>
+            <div class="small danger-text">${escapeHtml(e.message)}</div>
+            <button class="button w-auto mt-10" onclick="viewCourseDiscussions('${escapeAttr(courseId)}')">Retry</button>
+        </div>`;
+    }
   }
 }
 
@@ -1297,6 +1305,11 @@ async function renderHelp() {
   } catch (error) {
     console.error('Help error:', error);
     UI.showNotification('Error loading help center: ' + error.message, 'error');
+    content.innerHTML = `<div class="card danger-border">
+      <h3>Error Loading Help Center</h3>
+      <div class="small danger-text">${escapeHtml(error.message)}</div>
+      <button class="button w-auto mt-10" onclick="renderHelp()">Retry</button>
+    </div>`;
   }
 }
 
@@ -1597,12 +1610,20 @@ function updateACPreview() {
 
 async function renderSettings() {
   const renderId = ++window.currentRenderId;
+  const content = document.getElementById('pageContent');
   try {
     if (renderId !== window.currentRenderId) return;
     SettingsManager.render('Enable real-time desktop notifications for student submissions and system alerts.');
   } catch (error) {
     console.error('Settings error:', error);
     UI.showNotification('Error loading settings: ' + error.message, 'error');
+    if (content) {
+        content.innerHTML = `<div class="card danger-border">
+          <h3>Error Loading Settings</h3>
+          <div class="small danger-text">${escapeHtml(error.message)}</div>
+          <button class="button w-auto mt-10" onclick="renderSettings()">Retry</button>
+        </div>`;
+    }
   }
 }
 
@@ -2524,7 +2545,15 @@ async function viewQuizResults(quizId) {
       </div>
     `;
   } catch (e) {
+    console.error('Quiz results error:', e);
     UI.showNotification('Error loading quiz results: ' + e.message, 'error');
+    if (container) {
+        container.innerHTML = `<div class="card danger-border">
+          <h3>Error Loading Results</h3>
+          <div class="small danger-text">${escapeHtml(e.message)}</div>
+          <button class="button w-auto mt-10" onclick="viewQuizResults('${escapeAttr(quizId)}')">Retry</button>
+        </div>`;
+    }
   }
 }
 
@@ -2627,7 +2656,15 @@ async function gradeQuizSubmission(submissionId, quizId) {
     </div>
   `;
   } catch (e) {
+    console.error('Quiz grading error:', e);
     UI.showNotification('Error loading quiz submission: ' + e.message, 'error');
+    if (container) {
+        container.innerHTML = `<div class="card danger-border">
+          <h3>Error Loading Submission</h3>
+          <div class="small danger-text">${escapeHtml(e.message)}</div>
+          <button class="button w-auto mt-10" onclick="gradeQuizSubmission('${escapeAttr(submissionId)}', '${escapeAttr(quizId)}')">Retry</button>
+        </div>`;
+    }
     return;
   }
 

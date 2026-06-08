@@ -27,12 +27,14 @@ const BACKUP_CONFIG = {
 };
 
 async function renderDashboard() {
+  const renderId = ++window.currentRenderId;
   SupabaseDB.deleteExpiredBroadcasts().catch(e => console.warn('Cleanup error:', e));
 
   const content = document.getElementById('pageContent');
   if (!content) return;
 
   try {
+    if (renderId !== window.currentRenderId) return;
     const [
       totalUsers,
       students,
@@ -66,6 +68,7 @@ async function renderDashboard() {
       SupabaseDB.getCount('violations'),
       SupabaseDB.getCount('support_tickets', q => q.or('status.eq.open,status.eq.pending'))
     ]);
+    if (renderId !== window.currentRenderId) return;
     const stats = {
       totalUsers,
       students,
@@ -158,6 +161,7 @@ let filteredUsers = [];
 
 let _coursePage = 1;
 async function renderCourses(page = 1) {
+  const renderId = ++window.currentRenderId;
   _coursePage = page;
   const content = document.getElementById('pageContent');
   if (!content) return;
@@ -165,7 +169,9 @@ async function renderCourses(page = 1) {
   const pageSize = 20;
 
   try {
+    if (renderId !== window.currentRenderId) return;
     const { data: courses, total } = await SupabaseDB.getCourses(null, null, { page, pageSize });
+    if (renderId !== window.currentRenderId) return;
 
     content.innerHTML = `
     <section>
@@ -287,6 +293,7 @@ async function renderUsers(isImmediate = false, page = 1) {
       _userSearchTimer = setTimeout(() => renderUsers(true, page), 300);
       return;
   }
+  const renderId = ++window.currentRenderId;
   _userPage = page;
 
   const content = document.getElementById('pageContent');
@@ -330,6 +337,7 @@ async function renderUsers(isImmediate = false, page = 1) {
   }
 
   try {
+    if (renderId !== window.currentRenderId) return;
     const { data: users, total } = await SupabaseDB.getUsers({
         searchTerm,
         role: roleFilter === 'all' ? null : roleFilter,
@@ -337,6 +345,7 @@ async function renderUsers(isImmediate = false, page = 1) {
         page,
         pageSize
     });
+    if (renderId !== window.currentRenderId) return;
 
     allUsers = users; // This only holds the current page now
 
@@ -642,6 +651,7 @@ async function removeSchedule(idx) {
 
 let _ticketPage = 1;
 async function renderSupportTickets(page = 1) {
+  const renderId = ++window.currentRenderId;
   _ticketPage = page;
   const content = document.getElementById('pageContent');
   if (!content) return;
@@ -649,7 +659,9 @@ async function renderSupportTickets(page = 1) {
   const pageSize = 15;
 
   try {
+    if (renderId !== window.currentRenderId) return;
     const { data: tickets, total } = await SupabaseDB.getSupportTickets(null, { page, pageSize });
+    if (renderId !== window.currentRenderId) return;
     allTickets = tickets;
 
     content.innerHTML = `
@@ -777,11 +789,14 @@ async function deleteSupportTicket(id) {
 window.deleteSupportTicket = deleteSupportTicket;
 
 async function renderInvites() {
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
 
   try {
+    if (renderId !== window.currentRenderId) return;
     const invites = await SupabaseDB.getAllTableData('invites');
+    if (renderId !== window.currentRenderId) return;
     const now = new Date();
 
     content.innerHTML = `
@@ -841,11 +856,14 @@ async function revokeInvite(token) {
 window.revokeInvite = revokeInvite;
 
 async function renderBroadcasts() {
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
 
   try {
+    if (renderId !== window.currentRenderId) return;
     const { data: broadcasts, total } = await SupabaseDB.getBroadcasts();
+    if (renderId !== window.currentRenderId) return;
 
     content.innerHTML = `
     <section>
@@ -898,6 +916,7 @@ window.deleteBroadcast = deleteBroadcast;
 
 let _violationPage = 1;
 async function renderViolations(page = 1) {
+  const renderId = ++window.currentRenderId;
   _violationPage = page;
   const content = document.getElementById('pageContent');
   if (!content) return;
@@ -932,12 +951,14 @@ async function renderViolations(page = 1) {
   }
 
   try {
+    if (renderId !== window.currentRenderId) return;
     const { data: violations, total } = await SupabaseDB.getViolations(null, null, null, {
       severity: severity === '' ? null : severity,
       assessmentType: type === '' ? null : type,
       page,
       pageSize
     });
+    if (renderId !== window.currentRenderId) return;
 
     UI.renderTable('violationsTable', ['Time', 'User', 'Assessment', 'Type', 'Severity', 'Score'], violations, (v) => {
         let sevClass = 'badge-active';
@@ -968,14 +989,17 @@ async function renderViolations(page = 1) {
 }
 
 async function renderResets() {
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
 
   try {
+    if (renderId !== window.currentRenderId) return;
     // Optimization: Use server-side filtering for pending resets
     const { data: pendingResets, total } = await SupabaseDB.getUsers({
         resetStatus: 'pending'
     });
+    if (renderId !== window.currentRenderId) return;
 
     content.innerHTML = `
     <section>
@@ -1118,6 +1142,7 @@ async function denyReset(email) {
 }
 
 async function renderReports(tab = 'submissions', page = 1) {
+    const renderId = ++window.currentRenderId;
     const content = document.getElementById('pageContent');
     if (!content) return;
 
@@ -1143,9 +1168,11 @@ async function renderReports(tab = 'submissions', page = 1) {
     `;
 
     try {
+        if (renderId !== window.currentRenderId) return;
         let res;
         if (tab === 'submissions') {
             res = await SupabaseDB.getSubmissions(null, null, null, { page, pageSize });
+            if (renderId !== window.currentRenderId) return;
             UI.renderTable('reportsTable', ['User', 'Assignment', 'Status', 'Grade', 'Submitted'], res.data, (s) => `
                 <tr>
                     <td><div class="small bold">${escapeHtml(s.student_email)}</div></td>
@@ -1157,6 +1184,7 @@ async function renderReports(tab = 'submissions', page = 1) {
             `);
         } else if (tab === 'quiz_submissions') {
             res = await SupabaseDB.getQuizSubmissions(null, null, null, { page, pageSize });
+            if (renderId !== window.currentRenderId) return;
             UI.renderTable('reportsTable', ['User', 'Quiz', 'Attempt', 'Score', 'Status', 'Started'], res.data, (s) => `
                 <tr>
                     <td><div class="small bold">${escapeHtml(s.student_email)}</div></td>
@@ -1169,6 +1197,7 @@ async function renderReports(tab = 'submissions', page = 1) {
             `);
         } else if (tab === 'attendance') {
             res = await SupabaseDB.getAttendance(null, null, { page, pageSize });
+            if (renderId !== window.currentRenderId) return;
             UI.renderTable('reportsTable', ['User', 'Course', 'Live Class', 'Join Time', 'Duration'], res.data, (a) => `
                 <tr>
                     <td><div class="small bold">${escapeHtml(a.student_email)}</div></td>
@@ -1180,6 +1209,7 @@ async function renderReports(tab = 'submissions', page = 1) {
             `);
         } else if (tab === 'certificates') {
             res = await SupabaseDB.getCertificates(null, { page, pageSize });
+            if (renderId !== window.currentRenderId) return;
             UI.renderTable('reportsTable', ['User', 'Course', 'Issued At', 'Action'], res.data, (c) => `
                 <tr>
                     <td><div class="small bold">${escapeHtml(c.student_email)}</div></td>
@@ -1190,6 +1220,7 @@ async function renderReports(tab = 'submissions', page = 1) {
             `);
         } else if (tab === 'study_sessions') {
             res = await SupabaseDB.getStudySessions(null, { page, pageSize });
+            if (renderId !== window.currentRenderId) return;
             UI.renderTable('reportsTable', ['User', 'Duration', 'Started', 'Ended'], res.data, (s) => `
                 <tr>
                     <td><div class="small bold">${escapeHtml(s.user_email)}</div></td>
@@ -1209,11 +1240,12 @@ async function renderReports(tab = 'submissions', page = 1) {
 }
 
 async function renderAnalytics() {
-
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
 
   try {
+    if (renderId !== window.currentRenderId) return;
     const now = new Date();
     const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
 
@@ -1232,6 +1264,7 @@ async function renderAnalytics() {
       SupabaseDB.getCount('violations'),
       supabaseClient.from('submissions').select('submitted_at').gte('submitted_at', thirtyDaysAgo.toISOString())
     ]);
+    if (renderId !== window.currentRenderId) return;
 
     const recentSubs = recentSubsRes.data || [];
 
@@ -1297,12 +1330,14 @@ async function renderAnalytics() {
 }
 
 async function renderMaintenance() {
-
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
 
   try {
+    if (renderId !== window.currentRenderId) return;
     const maintenance = await SupabaseDB.getMaintenance(true);
+    if (renderId !== window.currentRenderId) return;
 
     // Auto-cleanup expired schedules
     const now = Date.now();
@@ -1395,11 +1430,12 @@ async function renderMaintenance() {
 }
 
 async function renderHealth() {
-
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
 
   try {
+    if (renderId !== window.currentRenderId) return;
     const now = new Date();
     const oneHourAgo = new Date(now.getTime() - (60 * 60 * 1000));
     const thirtyMinsAgo = new Date(now.getTime() - (30 * 60 * 1000));
@@ -1423,6 +1459,7 @@ async function renderHealth() {
       SupabaseDB.getCount('users', q => q.gt('created_at', oneHourAgo.toISOString())),
       SupabaseDB.getCount('users', q => q.gt('updated_at', thirtyMinsAgo.toISOString()))
     ]);
+    if (renderId !== window.currentRenderId) return;
 
     const apiStats = SupabaseDB.getStats();
     const dbLatency = apiStats.lastRequestTime;
@@ -1465,12 +1502,14 @@ async function renderHealth() {
 }
 
 async function renderManagement() {
-
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
 
   try {
+    if (renderId !== window.currentRenderId) return;
     const maintenance = await SupabaseDB.getMaintenance();
+    if (renderId !== window.currentRenderId) return;
     const autoSettings = maintenance.metadata?.autoTasks || {};
 
     content.innerHTML = `
@@ -1943,10 +1982,12 @@ async function importBackup(event) {
 }
 
 async function renderSettings() {
+    const renderId = ++window.currentRenderId;
     SettingsManager.render('Enable real-time desktop notifications for system health, server alerts, and password reset requests.');
 }
 
 async function renderHelp() {
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
 
@@ -1961,15 +2002,17 @@ async function renderHelp() {
 window.renderHelp = renderHelp;
 
 async function renderSystem() {
-
+  const renderId = ++window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
 
   try {
+    if (renderId !== window.currentRenderId) return;
     const [maint, serverTimeRes] = await Promise.all([
         SupabaseDB.getMaintenance(),
         supabaseClient.rpc('get_server_time')
     ]);
+    if (renderId !== window.currentRenderId) return;
 
     const serverTime = serverTimeRes.data;
 

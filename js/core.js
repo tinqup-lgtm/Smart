@@ -706,6 +706,7 @@ const NotificationManager = {
     _isUpdating: false,
     _updatePromise: Promise.resolve(),
     _needsUpdate: false,
+    _alertedSessionIds: new Set(),
     _channel: window.BroadcastChannel ? new BroadcastChannel('smartlms_notifications') : null,
 
     /**
@@ -932,10 +933,11 @@ const NotificationManager = {
                 const prefs = await this.getPreferences();
 
                 // Find ALL un-alerted notifications
-                const unalerted = notifications.filter(n => !n.is_read && !alertedIds.includes(n.id));
+                const unalerted = notifications.filter(n => !n.is_read && !alertedIds.includes(n.id) && !this._alertedSessionIds.has(n.id));
 
                 if (unalerted.length > 0 && prefs.inApp) {
                     unalerted.forEach(n => {
+                        this._alertedSessionIds.add(n.id);
                         this.sendBrowserNotification(n.title, n.message);
                         UI.showNotification(n.title, 'info');
                     });

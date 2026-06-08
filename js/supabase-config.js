@@ -280,12 +280,13 @@ class SupabaseDB {
         // Update secrets via secure RPC if provided
         if (user.password || user.session_id || user.reset_data) {
             try {
-                await supabaseClient.rpc('update_user_secret_secure', {
+                const { error: secretError } = await supabaseClient.rpc('update_user_secret_secure', {
                     p_email: user.email,
                     p_password_hash: user.password || null,
                     p_session_id: user.session_id || (user.password ? 'invalidated_' + Date.now() : null),
                     p_reset_data: user.reset_data || null
                 });
+                if (secretError) throw secretError;
 
                 // SECURITY: If session ID was updated, we MUST establish the new context locally
                 // BEFORE the subsequent getUser call to avoid RLS authorization failures.
@@ -295,7 +296,8 @@ class SupabaseDB {
                     window.setSupabaseSession(user.session_id);
                 }
             } catch (e) {
-                console.warn('Failed to update user secrets:', e);
+                console.error('Failed to update user secrets:', e);
+                throw new Error('Database Error: Security context could not be updated. ' + (e.message || ''));
             }
         }
 
