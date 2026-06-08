@@ -1,3 +1,9 @@
+/**
+ * Configuration for system-wide backups and restorations.
+ * Note: 'onConflict' targets 'id' for tables with surrogate primary keys to ensure
+ * administrative restorations correctly overwrite existing records, avoiding PK violations.
+ * Tables without surrogate IDs (e.g., 'enrollments') use their natural composite keys.
+ */
 const BACKUP_CONFIG = {
     version: '1.2.0',
     tables: [

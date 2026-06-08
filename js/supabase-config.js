@@ -1074,12 +1074,11 @@ class SupabaseDB {
     }
 
     static async saveQuizSubmission(submission) {
-        // We use 'id' as onConflict if present, otherwise fallback to the composite key.
-        // However, _upsert currently only supports one.
-        // The schema has a unique constraint on (quiz_id, student_email, attempt_number).
-        // For production robustness, if ID is missing, we must use the composite key.
+        // Use 'id' as onConflict if present to support administrative restoration/updates,
+        // otherwise fallback to the natural composite key.
         const onConflict = submission.id ? 'id' : 'quiz_id,student_email,attempt_number';
         const data = await this._upsert('quiz_submissions', submission, onConflict);
+        _cache.invalidate('quiz_submissions');
         return data?.[0];
     }
 
