@@ -630,7 +630,10 @@ class SupabaseDB {
     }
 
     static async saveSubmission(submission) {
-        const data = await this._upsert('submissions', submission, 'assignment_id,student_email');
+        // Use 'id' as onConflict if present to support administrative restoration/updates,
+        // otherwise fallback to the natural composite key for standard student submissions.
+        const onConflict = submission.id ? 'id' : 'assignment_id,student_email';
+        const data = await this._upsert('submissions', submission, onConflict);
         _cache.invalidate('submissions');
         return data?.[0];
     }
@@ -1491,7 +1494,10 @@ class SupabaseDB {
     }
 
     static async saveAttendance(attendance) {
-        const data = await this._upsert('attendance', attendance, 'live_class_id,student_email');
+        // Use 'id' as onConflict if present to support administrative restoration/updates,
+        // otherwise fallback to the natural composite key.
+        const onConflict = attendance.id ? 'id' : 'live_class_id,student_email';
+        const data = await this._upsert('attendance', attendance, onConflict);
         _cache.invalidate('attendance');
         return data?.[0];
     }
