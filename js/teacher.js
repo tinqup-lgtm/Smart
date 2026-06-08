@@ -1060,8 +1060,10 @@ async function gradeSubmission(assignmentId, studentEmail) {
     let lateDays = 0;
     let latePenalty = 0;
     if (subDate > dueDate) {
-        lateDays = Math.floor((subDate - dueDate) / (1000 * 60 * 60 * 24));
-        latePenalty = lateDays * (assignment.late_penalty_per_day || 0);
+        // Calculate days difference, ensuring we don't count partial days as 0 if they cross a 24h boundary
+        lateDays = Math.max(0, Math.floor((subDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)));
+        // Cap penalty at 100%
+        latePenalty = Math.min(100, Math.max(0, lateDays * (assignment.late_penalty_per_day || 0)));
     }
 
     const submissionAnswers = submission.answers || {};

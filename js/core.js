@@ -919,18 +919,13 @@ const NotificationManager = {
 
         try {
             const notifications = await this.fetchNotifications();
-            const freshUser = await SupabaseDB.getUser(user.email);
-            const metadata = freshUser?.metadata || {};
-
             await SupabaseDB.markNotificationsAsRead(user.email);
 
             const broadcastIds = notifications.filter(n => n.is_broadcast).map(n => n.id);
-            const readBroadcasts = [...new Set([...(metadata.read_broadcasts || []), ...broadcastIds])];
-
-            await SupabaseDB.saveUser({
-                ...freshUser,
-                metadata: { ...metadata, read_broadcasts: readBroadcasts }
-            });
+            if (broadcastIds.length > 0) {
+                // Use atomic update to append multiple broadcast IDs to read_broadcasts
+                await SupabaseDB.updateMetadataAtomic(user.email, 'read_broadcasts', broadcastIds, 'append');
+            }
 
             // Sync other tabs
             if (this._channel) {
@@ -952,16 +947,12 @@ const NotificationManager = {
 
         try {
             const notifications = await this.fetchNotifications();
-            const freshUser = await SupabaseDB.getUser(user.email);
-            const metadata = freshUser?.metadata || {};
 
             const broadcastIds = notifications.filter(n => n.is_broadcast).map(n => n.id);
-            const clearedBroadcasts = [...new Set([...(metadata.cleared_broadcasts || []), ...broadcastIds])];
-
-            await SupabaseDB.saveUser({
-                ...freshUser,
-                metadata: { ...metadata, cleared_broadcasts: clearedBroadcasts }
-            });
+            if (broadcastIds.length > 0) {
+                // Use atomic update to append multiple broadcast IDs to cleared_broadcasts
+                await SupabaseDB.updateMetadataAtomic(user.email, 'cleared_broadcasts', broadcastIds, 'append');
+            }
 
             await SupabaseDB.deleteNotifications(user.email);
 
@@ -1051,15 +1042,18 @@ const NotificationManager = {
                 const unalerted = notifications.filter(n => !n.is_read && !alertedIds.includes(n.id) && !this._alertedSessionIds.has(n.id));
 
                 if (unalerted.length > 0 && prefs.inApp) {
+                    // Update session-level Set immediately to prevent redundant toasts within THIS tab
+                    unalerted.forEach(n => this._alertedSessionIds.add(n.id));
+
+                    // Mark as alerted globally using atomic RPC to avoid tab race conditions
+                    // We batch IDs into a single JSONB array call for efficiency
+                    const ids = unalerted.map(n => n.id);
+                    await SupabaseDB.updateMetadataAtomic(user.email, 'alerted_ids', ids, 'append');
+
                     unalerted.forEach(n => {
-                        this._alertedSessionIds.add(n.id);
                         this.sendBrowserNotification(n.title, n.message);
                         UI.showNotification(n.title, 'info');
                     });
-
-                    // Mark as alerted globally
-                    const updatedAlerted = [...new Set([...alertedIds, ...unalerted.map(n => n.id)])];
-                    await SupabaseDB.saveUser({ ...freshUser, metadata: { ...metadata, alerted_ids: updatedAlerted } });
 
                     // Sync other tabs
                     if (this._channel) {
@@ -1140,14 +1134,8 @@ const NotificationManager = {
             const user = await SessionManager.getCurrentUser();
             if (!user) return;
 
-            const freshUser = await SupabaseDB.getUser(user.email);
-            const metadata = freshUser?.metadata || {};
-            const readBroadcasts = [...new Set([...(metadata.read_broadcasts || []), id])];
-
-            await SupabaseDB.saveUser({
-                ...freshUser,
-                metadata: { ...metadata, read_broadcasts: readBroadcasts }
-            });
+            // Use atomic RPC to safely append broadcast ID to read_broadcasts array
+            await SupabaseDB.updateMetadataAtomic(user.email, 'read_broadcasts', id, 'append');
 
             this.queueUpdate(true);
         } catch (e) {

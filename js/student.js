@@ -3,6 +3,7 @@ const StudentState = {
   quizTimer: null,
   isStartingQuiz: false,
   isSubmittingQuiz: false,
+  isSubmittingAssignment: false,
   studyInterval: null,
   studyStartTime: null,
   currentStudyCourseId: null,
@@ -2509,6 +2510,9 @@ async function deleteSubmissionById(assignmentId, studentEmail) {
 }
 async function submitAssignment(assignmentId, studentEmail, isDraft = false) {
   const renderId = window.currentRenderId;
+  if (StudentState.isSubmittingAssignment) return;
+  StudentState.isSubmittingAssignment = true;
+
   const btn = isDraft ? document.getElementById('saveDraftBtn') : document.getElementById('submitAssignBtn');
   const otherBtn = isDraft ? document.getElementById('submitAssignBtn') : document.getElementById('saveDraftBtn');
   const questions = document.querySelectorAll(`#qwrap-${assignmentId} .question`);
@@ -2604,9 +2608,14 @@ async function submitAssignment(assignmentId, studentEmail, isDraft = false) {
     console.error('Submission failed:', e);
     UI.showNotification(`Submission failed: ${e.message || 'Unknown error'}. ${e.details || ''}`);
   } finally {
+    StudentState.isSubmittingAssignment = false;
     AntiCheat.destroy(); // Destroy after all processing is complete
     UI.hideLoading('assignmentForm');
-    if (btn) { btn.disabled = false; btn.textContent = 'Submit Assignment'; }
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = isDraft ? 'Save Draft' : 'Submit Assignment';
+    }
+    if (otherBtn) otherBtn.disabled = false;
   }
 }
 
