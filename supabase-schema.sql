@@ -1237,20 +1237,27 @@ CREATE INDEX IF NOT EXISTS idx_violations_metadata_gin ON violations USING GIN (
 
 -- Auth helpers strictly using Custom x-session-id header
 
--- Raw helpers that bypass reset-state blocking (Internal use only)
-CREATE OR REPLACE FUNCTION get_auth_email_raw() RETURNS VARCHAR AS $$
+-- Internal helper to retrieve session ID from headers (DRY)
+CREATE OR REPLACE FUNCTION _get_session_id() RETURNS VARCHAR AS $$
 DECLARE
   v_headers JSONB;
-  v_session_id VARCHAR;
-  v_email VARCHAR;
 BEGIN
   BEGIN
     v_headers := current_setting('request.headers', true)::jsonb;
-    v_session_id := v_headers->>'x-session-id';
+    RETURN v_headers->>'x-session-id';
   EXCEPTION WHEN OTHERS THEN
     RETURN NULL;
   END;
+END;
+$$ LANGUAGE plpgsql STABLE;
 
+-- Raw helpers that bypass reset-state blocking (Internal use only)
+CREATE OR REPLACE FUNCTION get_auth_email_raw() RETURNS VARCHAR AS $$
+DECLARE
+  v_session_id VARCHAR;
+  v_email VARCHAR;
+BEGIN
+  v_session_id := _get_session_id();
   IF v_session_id IS NOT NULL AND v_session_id <> '' THEN
     SELECT email INTO v_email FROM user_secrets WHERE session_id = v_session_id LIMIT 1;
     RETURN v_email;
@@ -1261,17 +1268,10 @@ $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION get_auth_role_raw() RETURNS VARCHAR AS $$
 DECLARE
-  v_headers JSONB;
   v_session_id VARCHAR;
   v_role VARCHAR;
 BEGIN
-  BEGIN
-    v_headers := current_setting('request.headers', true)::jsonb;
-    v_session_id := v_headers->>'x-session-id';
-  EXCEPTION WHEN OTHERS THEN
-    RETURN NULL;
-  END;
-
+  v_session_id := _get_session_id();
   IF v_session_id IS NOT NULL AND v_session_id <> '' THEN
     SELECT u.role INTO v_role
     FROM users u
@@ -1338,6 +1338,53 @@ $$ LANGUAGE sql STABLE;
 CREATE OR REPLACE FUNCTION is_teacher() RETURNS BOOLEAN AS $$
   SELECT get_auth_role() = 'teacher';
 $$ LANGUAGE sql STABLE;
+
+-- Internal helper for atomic metadata updates
+-- Safely appends or removes values from user metadata tracking arrays
+CREATE OR REPLACE FUNCTION update_user_metadata_atomic(
+    p_email VARCHAR,
+    p_key TEXT,
+    p_value JSONB, -- Can be a single string/number or an array of values
+    p_operation TEXT -- 'append' or 'remove'
+) RETURNS VOID AS $$
+BEGIN
+    -- Security: Only authorized roles or self can update metadata
+    IF NOT (is_admin() OR get_auth_email_raw() = p_email) THEN
+        RAISE EXCEPTION 'Unauthorized metadata update.';
+    END IF;
+
+    UPDATE users
+    SET metadata = CASE
+        WHEN p_operation = 'append' THEN
+            metadata || jsonb_build_object(p_key,
+                COALESCE((
+                    SELECT jsonb_agg(DISTINCT x)
+                    FROM (
+                        SELECT jsonb_array_elements_text(COALESCE(metadata->p_key, '[]'::jsonb)) x
+                        UNION ALL
+                        SELECT * FROM jsonb_array_elements_text(
+                            CASE WHEN jsonb_typeof(p_value) = 'array' THEN p_value ELSE jsonb_build_array(p_value) END
+                        )
+                    ) t
+                ), '[]'::jsonb)
+            )
+        WHEN p_operation = 'remove' THEN
+            metadata || jsonb_build_object(p_key,
+                COALESCE((
+                    SELECT jsonb_agg(x)
+                    FROM jsonb_array_elements_text(COALESCE(metadata->p_key, '[]'::jsonb)) x
+                    WHERE x NOT IN (
+                        SELECT * FROM jsonb_array_elements_text(
+                            CASE WHEN jsonb_typeof(p_value) = 'array' THEN p_value ELSE jsonb_build_array(p_value) END
+                        )
+                    )
+                ), '[]'::jsonb)
+            )
+        ELSE metadata
+    END
+    WHERE email = p_email;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Secure Auth Logic
 CREATE OR REPLACE FUNCTION authenticate_user(p_email VARCHAR, p_password_hash VARCHAR, p_session_id VARCHAR)
@@ -1809,39 +1856,40 @@ END;
 $$ LANGUAGE plpgsql STABLE;
 
 -- RPC for reconciling expired attempts
+-- Optimized to identification and finalize only strictly expired attempts using set-based logic
 CREATE OR REPLACE FUNCTION reconcile_quiz_attempts(p_quiz_id UUID DEFAULT NULL, p_student_email VARCHAR DEFAULT NULL)
 RETURNS VOID AS $$
 DECLARE
     v_sub RECORD;
     v_score_data RECORD;
-    v_deadline TIMESTAMP WITH TIME ZONE;
 BEGIN
     FOR v_sub IN
-        SELECT qs.*, q.time_limit, q.end_at
+        SELECT qs.id, qs.quiz_id, qs.answers, qs.started_at,
+               LEAST(
+                   COALESCE(qs.started_at + (q.time_limit * INTERVAL '1 minute'), 'infinity'::timestamp with time zone),
+                   COALESCE(q.end_at, 'infinity'::timestamp with time zone)
+               ) as deadline
         FROM quiz_submissions qs
         JOIN quizzes q ON qs.quiz_id = q.id
         WHERE qs.status = 'in-progress'
         AND (p_quiz_id IS NULL OR qs.quiz_id = p_quiz_id)
         AND (p_student_email IS NULL OR qs.student_email = p_student_email)
+        -- Strictly target only expired records (with 1 min grace)
+        AND NOW() > (LEAST(
+            COALESCE(qs.started_at + (q.time_limit * INTERVAL '1 minute'), 'infinity'::timestamp with time zone),
+            COALESCE(q.end_at, 'infinity'::timestamp with time zone)
+        ) + INTERVAL '1 minute')
     LOOP
-        -- Calculate definitive deadline
-        v_deadline := LEAST(
-            COALESCE(v_sub.started_at + (v_sub.time_limit * INTERVAL '1 minute'), 'infinity'::timestamp with time zone),
-            COALESCE(v_sub.end_at, 'infinity'::timestamp with time zone)
-        );
+        v_score_data := calculate_quiz_score(v_sub.quiz_id, v_sub.answers);
 
-        -- If current time is past deadline (with 1 min grace), finalize it
-        IF NOW() > (v_deadline + INTERVAL '1 minute') THEN
-            v_score_data := calculate_quiz_score(v_sub.quiz_id, v_sub.answers);
-
-            UPDATE quiz_submissions SET
-                status = 'submitted',
-                score = v_score_data.score,
-                total_points = v_score_data.total_points,
-                submitted_at = v_deadline, -- Cap submission time to deadline for fairness
-                time_spent = EXTRACT(EPOCH FROM (v_deadline - v_sub.started_at))::INTEGER
-            WHERE id = v_sub.id;
-        END IF;
+        UPDATE quiz_submissions SET
+            status = 'submitted',
+            score = v_score_data.score,
+            total_points = v_score_data.total_points,
+            submitted_at = v_sub.deadline, -- Cap submission time to deadline for fairness
+            time_spent = EXTRACT(EPOCH FROM (v_sub.deadline - v_sub.started_at))::INTEGER,
+            updated_at = NOW()
+        WHERE id = v_sub.id;
     END LOOP;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -2002,7 +2050,8 @@ BEGIN
             WHERE id::uuid IN (SELECT id FROM broadcasts)
         ), '[]'::jsonb)
     )
-    WHERE metadata ? 'alerted_ids' OR metadata ? 'cleared_broadcasts' OR metadata ? 'read_broadcasts';
+    WHERE (metadata ? 'alerted_ids' OR metadata ? 'cleared_broadcasts' OR metadata ? 'read_broadcasts')
+    AND (email = get_auth_email_raw());
 
     -- Automatically clear expired password reset requests (24h window)
     UPDATE users

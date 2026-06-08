@@ -65,6 +65,7 @@ const _stats = {
 
 const _cache = {
     data: {},
+    pending: new Map(), // Track in-flight promises to prevent "thundering herd" requests
     ttl: 30000, // 30 seconds
     async fetch(key, fn) {
         const now = Date.now();
@@ -77,16 +78,38 @@ const _cache = {
 
         const contextualKey = userEmail ? `${key}_${userEmail}` : key;
 
+        // 1. Check if we have a fresh cached value
         if (this.data[contextualKey] && (now - this.data[contextualKey].ts < this.ttl)) {
             return this.data[contextualKey].val;
         }
-        const val = await fn();
-        this.data[contextualKey] = { val, ts: now };
-        return val;
+
+        // 2. Check if a request for this key is already in-flight
+        if (this.pending.has(contextualKey)) {
+            return this.pending.get(contextualKey);
+        }
+
+        // 3. Execute the fetch and track it
+        const promise = (async () => {
+            try {
+                const val = await fn();
+                this.data[contextualKey] = { val, ts: Date.now() };
+                return val;
+            } finally {
+                this.pending.delete(contextualKey);
+            }
+        })();
+
+        this.pending.set(contextualKey, promise);
+        return promise;
     },
     invalidate(key) {
-        if (key) delete this.data[key];
-        else this.data = {};
+        if (key) {
+            delete this.data[key];
+            this.pending.delete(key);
+        } else {
+            this.data = {};
+            this.pending.clear();
+        }
     }
 };
 
@@ -165,6 +188,19 @@ class SupabaseDB {
         });
     }
 
+    /**
+     * Standardized helper for paginated data retrieval.
+     */
+    static async _getPaginated(query, options = {}) {
+        const { page = 1, pageSize = 20 } = options;
+        const from = (page - 1) * pageSize;
+        const to = from + pageSize - 1;
+
+        const { data, count, error } = await query.range(from, to);
+        if (error) throw error;
+        return { data: data || [], total: count || 0, page, pageSize };
+    }
+
     static async _request(fn) {
         if (!supabaseClient) {
             throw new Error('Supabase client not initialized. Check your connection or CDN availability.');
@@ -199,7 +235,7 @@ class SupabaseDB {
 
     // User operations
     static async getUsers(options = {}) {
-        const { searchTerm = '', role = null, resetStatus = null, status = null, page = 1, pageSize = 20 } = options;
+        const { searchTerm = '', role = null, resetStatus = null, status = null } = options;
         return this._request(async () => {
             let query = supabaseClient.from('users').select('*', { count: 'exact' });
             if (role) query = query.eq('role', role);
@@ -214,14 +250,7 @@ class SupabaseDB {
                 query = query.or(`full_name.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%`);
             }
 
-            const from = (page - 1) * pageSize;
-            const to = from + pageSize - 1;
-
-            const { data, count, error } = await query
-                .order('full_name', { ascending: true })
-                .range(from, to);
-            if (error) throw error;
-            return { data: data || [], total: count || 0, page, pageSize };
+            return this._getPaginated(query.order('full_name', { ascending: true }), options);
         });
     }
 
@@ -418,7 +447,7 @@ class SupabaseDB {
     // Assignment operations
     static async getAssignments(teacherEmail = null, courseId = null, courseIds = null, options = {}) {
         if (courseIds && courseIds.length === 0) return { data: [], total: 0 };
-        const { searchTerm = '', page = 1, pageSize = 20 } = options;
+        const { searchTerm = '' } = options;
 
         return this._request(async () => {
             let query = supabaseClient.from('assignments').select('*', { count: 'exact' });
@@ -427,14 +456,7 @@ class SupabaseDB {
             if (courseIds && courseIds.length > 0) query = query.in('course_id', courseIds);
             if (searchTerm) query = query.ilike('title', `%${searchTerm}%`);
 
-            const from = (page - 1) * pageSize;
-            const to = from + pageSize - 1;
-
-            const { data, count, error } = await query
-                .order('due_date', { ascending: false })
-                .range(from, to);
-            if (error) throw error;
-            return { data: data || [], total: count || 0, page, pageSize };
+            return this._getPaginated(query.order('due_date', { ascending: false }), options);
         });
     }
 
@@ -575,7 +597,7 @@ class SupabaseDB {
 
     // Submission operations
     static async getSubmissions(assignmentId = null, studentEmail = null, teacherEmail = null, options = {}) {
-        const { status = null, pendingGradingOnly = false, page = 1, pageSize = 20 } = options;
+        const { status = null, pendingGradingOnly = false } = options;
         return this._request(async () => {
             let selectStr = '*, assignments(*)';
             if (teacherEmail) selectStr = '*, assignments!inner(*)';
@@ -591,14 +613,7 @@ class SupabaseDB {
                 query = query.eq('status', status);
             }
 
-            const from = (page - 1) * pageSize;
-            const to = from + pageSize - 1;
-
-            const { data, count, error } = await query
-                .order('submitted_at', { ascending: false })
-                .range(from, to);
-            if (error) throw error;
-            return { data: data || [], total: count || 0, page, pageSize };
+            return this._getPaginated(query.order('submitted_at', { ascending: false }), options);
         });
     }
 
@@ -821,21 +836,14 @@ class SupabaseDB {
 
     // Course operations
     static async getCourses(teacherEmail = null, status = null, options = {}) {
-        const { searchTerm = '', page = 1, pageSize = 20 } = options;
+        const { searchTerm = '' } = options;
         return this._request(async () => {
             let query = supabaseClient.from('courses').select('*', { count: 'exact' });
             if (teacherEmail) query = query.eq('teacher_email', teacherEmail);
             if (status) query = query.eq('status', status);
             if (searchTerm) query = query.ilike('title', `%${searchTerm}%`);
 
-            const from = (page - 1) * pageSize;
-            const to = from + pageSize - 1;
-
-            const { data, count, error } = await query
-                .order('title', { ascending: true })
-                .range(from, to);
-            if (error) throw error;
-            return { data: data || [], total: count || 0, page, pageSize };
+            return this._getPaginated(query.order('title', { ascending: true }), options);
         });
     }
 
@@ -999,7 +1007,7 @@ class SupabaseDB {
     // Quiz operations
     static async getQuizzes(courseId = null, teacherEmail = null, courseIds = null, options = {}) {
         if (courseIds && courseIds.length === 0) return { data: [], total: 0 };
-        const { searchTerm = '', page = 1, pageSize = 20 } = options;
+        const { searchTerm = '' } = options;
 
         return this._request(async () => {
             let query = supabaseClient.from('quizzes').select('*', { count: 'exact' });
@@ -1008,14 +1016,7 @@ class SupabaseDB {
             if (courseIds && courseIds.length > 0) query = query.in('course_id', courseIds);
             if (searchTerm) query = query.ilike('title', `%${searchTerm}%`);
 
-            const from = (page - 1) * pageSize;
-            const to = from + pageSize - 1;
-
-            const { data, count, error } = await query
-                .order('created_at', { ascending: false })
-                .range(from, to);
-            if (error) throw error;
-            return { data: data || [], total: count || 0, page, pageSize };
+            return this._getPaginated(query.order('created_at', { ascending: false }), options);
         });
     }
 
@@ -1047,7 +1048,7 @@ class SupabaseDB {
     }
 
     static async getQuizSubmissions(quizId = null, studentEmail = null, teacherEmail = null, options = {}) {
-        const { status = null, page = 1, pageSize = 20 } = options;
+        const { status = null } = options;
         return this._request(async () => {
             let query = supabaseClient.from('quiz_submissions').select('*, quizzes!quiz_id(*)', { count: 'exact' });
             if (quizId) query = query.eq('quiz_id', quizId);
@@ -1055,14 +1056,7 @@ class SupabaseDB {
             if (teacherEmail) query = query.eq('quizzes.teacher_email', teacherEmail);
             if (status) query = query.eq('status', status);
 
-            const from = (page - 1) * pageSize;
-            const to = from + pageSize - 1;
-
-            const { data, count, error } = await query
-                .order('started_at', { ascending: false })
-                .range(from, to);
-            if (error) throw error;
-            return { data: data || [], total: count || 0, page, pageSize };
+            return this._getPaginated(query.order('started_at', { ascending: false }), options);
         });
     }
 
@@ -1258,11 +1252,16 @@ class SupabaseDB {
         });
     }
 
-    /** @deprecated Use createBroadcast instead */
-    static async saveBroadcast(broadcast) {
-        const data = await this._upsert('broadcasts', broadcast);
-        _cache.invalidate('broadcasts_active');
-        return data?.[0];
+
+    static async updateMetadataAtomic(email, key, value, operation) {
+        const { error } = await supabaseClient.rpc('update_user_metadata_atomic', {
+            p_email: email,
+            p_key: key,
+            p_value: value,
+            p_operation: operation
+        });
+        if (error) throw error;
+        _cache.invalidate(`user_${email}`);
     }
 
     static async markNotificationsAsRead(userEmail, id = null) {
@@ -1304,19 +1303,11 @@ class SupabaseDB {
     }
 
     static async getCertificates(studentEmail = null, options = {}) {
-        const { page = 1, pageSize = 20 } = options;
         return this._request(async () => {
             let query = supabaseClient.from('certificates').select('*, courses(*)', { count: 'exact' });
             if (studentEmail) query = query.eq('student_email', studentEmail);
 
-            const from = (page - 1) * pageSize;
-            const to = from + pageSize - 1;
-
-            const { data, count, error } = await query
-                .order('issued_at', { ascending: false })
-                .range(from, to);
-            if (error) throw error;
-            return { data: data || [], total: count || 0, page, pageSize };
+            return this._getPaginated(query.order('issued_at', { ascending: false }), options);
         });
     }
 
@@ -1433,19 +1424,11 @@ class SupabaseDB {
     }
 
     static async getStudySessions(email = null, options = {}) {
-        const { page = 1, pageSize = 20 } = options;
         return this._request(async () => {
             let query = supabaseClient.from('study_sessions').select('*', { count: 'exact' });
             if (email) query = query.eq('user_email', email);
 
-            const from = (page - 1) * pageSize;
-            const to = from + pageSize - 1;
-
-            const { data, count, error } = await query
-                .order('started_at', { ascending: false })
-                .range(from, to);
-            if (error) throw error;
-            return { data: data || [], total: count || 0, page, pageSize };
+            return this._getPaginated(query.order('started_at', { ascending: false }), options);
         });
     }
 
@@ -1504,7 +1487,6 @@ class SupabaseDB {
     }
 
     static async getAttendance(classId = null, studentEmail = null, options = {}) {
-        const { page = 1, pageSize = 20 } = options;
         return this._request(async () => {
             let query = supabaseClient
                 .from('attendance')
@@ -1513,14 +1495,7 @@ class SupabaseDB {
             if (classId) query = query.eq('live_class_id', classId);
             if (studentEmail) query = query.eq('student_email', studentEmail);
 
-            const from = (page - 1) * pageSize;
-            const to = from + pageSize - 1;
-
-            const { data, count, error } = await query
-                .order('join_time', { ascending: false })
-                .range(from, to);
-            if (error) throw error;
-            return { data: data || [], total: count || 0, page, pageSize };
+            return this._getPaginated(query.order('join_time', { ascending: false }), options);
         });
     }
 
@@ -1604,20 +1579,13 @@ class SupabaseDB {
 
 
     static async getSupportTickets(userEmail = null, options = {}) {
-        const { page = 1, pageSize = 20, status = null } = options;
+        const { status = null } = options;
         return this._request(async () => {
             let query = supabaseClient.from('support_tickets').select('*', { count: 'exact' });
             if (userEmail) query = query.eq('user_email', userEmail);
             if (status) query = query.eq('status', status);
 
-            const from = (page - 1) * pageSize;
-            const to = from + pageSize - 1;
-
-            const { data, count, error } = await query
-                .order('created_at', { ascending: false })
-                .range(from, to);
-            if (error) throw error;
-            return { data: data || [], total: count || 0, page, pageSize };
+            return this._getPaginated(query.order('created_at', { ascending: false }), options);
         });
     }
 
@@ -1636,22 +1604,22 @@ class SupabaseDB {
     }
 
     static async getViolations(assessmentId = null, userEmail = null, teacherEmail = null, options = {}) {
-        const { assessmentType = null, severity = null, page = 1, pageSize = 20 } = options;
+        const { assessmentType = null, severity = null } = options;
         return this._request(async () => {
             let query = supabaseClient.from('violations').select('*', { count: 'exact' });
 
             if (teacherEmail) {
                 // Get teacher's course IDs first
-                const { data: courses } = await this.getCourses(teacherEmail, null);
-                const courseIds = (courses.data || []).map(c => c.id);
+                const coursesRes = await this.getCourses(teacherEmail, null);
+                const courseIds = (coursesRes.data || []).map(c => c.id);
                 if (courseIds.length === 0) return { data: [], total: 0 };
 
                 // Get assignments and quizzes for these courses
-                const [{ data: assigns }, { data: quizzes }] = await Promise.all([
+                const [assignsRes, quizzesRes] = await Promise.all([
                     this.getAssignments(null, null, courseIds),
                     this.getQuizzes(null, null, courseIds)
                 ]);
-                const assessmentIds = [...(assigns.data || []).map(a => a.id), ...(quizzes.data || []).map(q => q.id)];
+                const assessmentIds = [...(assignsRes.data || []).map(a => a.id), ...(quizzesRes.data || []).map(q => q.id)];
                 if (assessmentIds.length === 0) return { data: [], total: 0 };
 
                 query = query.in('assessment_id', assessmentIds);
@@ -1662,14 +1630,7 @@ class SupabaseDB {
             if (assessmentType) query = query.eq('assessment_type', assessmentType);
             if (severity) query = query.eq('severity', severity);
 
-            const from = (page - 1) * pageSize;
-            const to = from + pageSize - 1;
-
-            const { data, count, error } = await query
-                .order('timestamp', { ascending: false })
-                .range(from, to);
-            if (error) throw error;
-            return { data: data || [], total: count || 0, page, pageSize };
+            return this._getPaginated(query.order('timestamp', { ascending: false }), options);
         });
     }
 
@@ -1708,7 +1669,7 @@ class SupabaseDB {
         const assessmentIds = [...new Set((violations || []).map(v => v.assessment_id))];
         if (assessmentIds.length === 0) return { data: [], total: 0 };
 
-        const [{ data: assigns }, { data: quizzes }] = await Promise.all([
+        const [assignsRes, quizzesRes] = await Promise.all([
             supabaseClient.from('assignments').select('id, title').in('id', assessmentIds),
             supabaseClient.from('quizzes').select('id, title').in('id', assessmentIds)
         ]);
@@ -1717,7 +1678,7 @@ class SupabaseDB {
         (violations || []).forEach(v => {
             const key = v.assessment_id;
             if (!summaryMap[key]) {
-                const assessment = [...(assigns || []), ...(quizzes || [])].find(a => a.id === key);
+                const assessment = [...(assignsRes.data || []), ...(quizzesRes.data || [])].find(a => a.id === key);
                 summaryMap[key] = {
                     id: key,
                     title: assessment?.title || 'Unknown Assessment',
@@ -1737,15 +1698,15 @@ class SupabaseDB {
     }
 
     static async getViolationSummary(teacherEmail) {
-        const { data: courses } = await this.getCourses(teacherEmail, null);
-        const courseIds = (courses || []).map(c => c.id);
+        const coursesRes = await this.getCourses(teacherEmail, null);
+        const courseIds = (coursesRes.data || []).map(c => c.id);
         if (courseIds.length === 0) return { data: [], total: 0 };
 
-        const [{ data: assigns }, { data: quizzes }] = await Promise.all([
+        const [assignsRes, quizzesRes] = await Promise.all([
             this.getAssignments(null, null, courseIds),
             this.getQuizzes(null, null, courseIds)
         ]);
-        const assessmentIds = [...(assigns || []).map(a => a.id), ...(quizzes || []).map(q => q.id)];
+        const assessmentIds = [...(assignsRes.data || []).map(a => a.id), ...(quizzesRes.data || []).map(q => q.id)];
         if (assessmentIds.length === 0) return { data: [], total: 0 };
 
         // PostgREST doesn't support complex aggregation well, so we fetch and aggregate in JS for now
@@ -1761,7 +1722,7 @@ class SupabaseDB {
         (data || []).forEach(v => {
             const key = v.assessment_id;
             if (!summaryMap[key]) {
-                const assessment = [...(assigns || []), ...(quizzes || [])].find(a => a.id === key);
+                const assessment = [...(assignsRes.data || []), ...(quizzesRes.data || [])].find(a => a.id === key);
                 summaryMap[key] = {
                     id: key,
                     title: assessment?.title || 'Unknown',
