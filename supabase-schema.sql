@@ -2197,6 +2197,10 @@ DROP POLICY IF EXISTS "Enrollments: Manage for Admins" ON enrollments;
 CREATE POLICY "Enrollments: Manage for Admins" ON enrollments FOR ALL USING (is_admin());
 DROP POLICY IF EXISTS "Enrollments: Student Update Progress" ON enrollments;
 CREATE POLICY "Enrollments: Student Update Progress" ON enrollments FOR UPDATE USING (student_email = get_auth_email() AND EXISTS (SELECT 1 FROM courses WHERE id = course_id AND status = 'published')) WITH CHECK (student_email = get_auth_email());
+DROP POLICY IF EXISTS "Enrollments: Teachers Delete" ON enrollments;
+CREATE POLICY "Enrollments: Teachers Delete" ON enrollments FOR DELETE USING (
+  is_teacher() AND EXISTS (SELECT 1 FROM courses WHERE id = enrollments.course_id AND teacher_email = get_auth_email())
+);
 
 -- 5. Assignments Table
 DROP POLICY IF EXISTS "Assignments: Select" ON assignments;
@@ -2232,6 +2236,10 @@ CREATE POLICY "Submissions: Update" ON submissions FOR UPDATE USING (
   teacher_email = get_auth_email() OR
   (student_email = get_auth_email() AND EXISTS (SELECT 1 FROM courses WHERE id = submissions.course_id AND status = 'published'))
 );
+DROP POLICY IF EXISTS "Submissions: Teachers Delete" ON submissions;
+CREATE POLICY "Submissions: Teachers Delete" ON submissions FOR DELETE USING (
+  is_teacher() AND EXISTS (SELECT 1 FROM courses WHERE id = submissions.course_id AND teacher_email = get_auth_email())
+);
 
 -- 7. Live Classes Table
 DROP POLICY IF EXISTS "Live Classes: Select" ON live_classes;
@@ -2260,6 +2268,10 @@ CREATE POLICY "Attendance: Insert" ON attendance FOR INSERT WITH CHECK (
   student_email = get_auth_email() AND
   EXISTS (SELECT 1 FROM enrollments WHERE course_id = attendance.course_id AND student_email = get_auth_email()) AND
   EXISTS (SELECT 1 FROM courses WHERE id = attendance.course_id AND status = 'published')
+);
+DROP POLICY IF EXISTS "Attendance: Teachers Delete" ON attendance;
+CREATE POLICY "Attendance: Teachers Delete" ON attendance FOR DELETE USING (
+  is_teacher() AND EXISTS (SELECT 1 FROM courses WHERE id = attendance.course_id AND teacher_email = get_auth_email())
 );
 
 -- 9. Quizzes Table
@@ -2295,6 +2307,10 @@ DROP POLICY IF EXISTS "Quiz Submissions: Update" ON quiz_submissions;
 CREATE POLICY "Quiz Submissions: Update" ON quiz_submissions FOR UPDATE USING (
   teacher_email = get_auth_email() OR
   (student_email = get_auth_email() AND EXISTS (SELECT 1 FROM courses WHERE id = quiz_submissions.course_id AND status = 'published'))
+);
+DROP POLICY IF EXISTS "Quiz Submissions: Teachers Delete" ON quiz_submissions;
+CREATE POLICY "Quiz Submissions: Teachers Delete" ON quiz_submissions FOR DELETE USING (
+  is_teacher() AND EXISTS (SELECT 1 FROM courses WHERE id = quiz_submissions.course_id AND teacher_email = get_auth_email())
 );
 
 -- 11. Materials Table
@@ -2396,7 +2412,7 @@ CREATE POLICY "Violations: Insert" ON violations FOR INSERT WITH CHECK (
 );
 DROP POLICY IF EXISTS "Violations: Delete" ON violations;
 CREATE POLICY "Violations: Delete" ON violations FOR DELETE USING (
-  teacher_email = get_auth_email()
+  is_teacher() AND EXISTS (SELECT 1 FROM courses WHERE id = violations.course_id AND teacher_email = get_auth_email())
 );
 
 -- 18. Planner Table
@@ -2417,6 +2433,10 @@ CREATE POLICY "Study Sessions: Insert" ON study_sessions FOR INSERT WITH CHECK (
   EXISTS (SELECT 1 FROM enrollments WHERE course_id = study_sessions.course_id AND student_email = get_auth_email()) AND
   EXISTS (SELECT 1 FROM courses WHERE id = study_sessions.course_id AND status = 'published')
 );
+DROP POLICY IF EXISTS "Study Sessions: Teachers Delete" ON study_sessions;
+CREATE POLICY "Study Sessions: Teachers Delete" ON study_sessions FOR DELETE USING (
+  is_teacher() AND EXISTS (SELECT 1 FROM courses WHERE id = study_sessions.course_id AND teacher_email = get_auth_email())
+);
 
 -- 20. Certificates Table
 DROP POLICY IF EXISTS "Certificates: User Access" ON certificates;
@@ -2427,6 +2447,10 @@ CREATE POLICY "Certificates: User Access" ON certificates FOR SELECT USING (
 );
 DROP POLICY IF EXISTS "Certificates: Admin Manage" ON certificates;
 CREATE POLICY "Certificates: Admin Manage" ON certificates FOR ALL USING (is_admin());
+DROP POLICY IF EXISTS "Certificates: Teachers Delete" ON certificates;
+CREATE POLICY "Certificates: Teachers Delete" ON certificates FOR DELETE USING (
+  is_teacher() AND EXISTS (SELECT 1 FROM courses WHERE id = certificates.course_id AND teacher_email = get_auth_email())
+);
 
 -- 21. Invites Table
 DROP POLICY IF EXISTS "Invites: Manage for Admins" ON invites;
