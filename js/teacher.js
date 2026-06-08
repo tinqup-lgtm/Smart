@@ -685,12 +685,18 @@ async function renderStudents() {
 
 async function unenrollStudent(courseId, studentEmail) {
   if (!await UI.confirm('Are you sure you want to completely unenroll this student? This will delete all their progress in this course.', 'Confirm Unenrollment')) return;
+
+  const btn = document.querySelector(`button[onclick*="unenrollStudent('${courseId}', '${studentEmail}')"]`);
+  const originalText = btn ? btn.textContent : 'Unenroll';
+  if (btn) { btn.disabled = true; btn.textContent = 'Unenrolling...'; }
+
   try {
     await SupabaseDB.deleteEnrollment(courseId, studentEmail);
     UI.showNotification('Student unenrolled successfully.', 'success');
     renderStudents();
   } catch (e) {
     UI.showNotification('Unenrollment failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = originalText; }
   }
 }
 
@@ -699,8 +705,17 @@ async function showCertForm(studentEmail) {
   try {
     const user = await SessionManager.getCurrentUser();
     if (renderId !== window.currentRenderId) return;
-    const { data: courses } = await SupabaseDB.getCourses(user.email, null);
+
+    // Filter courses: only show courses where the student is actually enrolled
+    const studentEnrolledCourseIds = TeacherState.currentStudents
+        .filter(s => s.email === studentEmail)
+        .map(s => s.course_id);
+
+    const { data: allCourses } = await SupabaseDB.getCourses(user.email, null);
     if (renderId !== window.currentRenderId) return;
+
+    const courses = allCourses.filter(c => studentEnrolledCourseIds.includes(c.id));
+
     const area = document.getElementById('certFormArea');
     if (!area) return;
     area.classList.remove('hidden');
@@ -709,9 +724,10 @@ async function showCertForm(studentEmail) {
       <h3 class="m-0">Issue Certificate to ${escapeHtml(studentEmail)}</h3>
       <label class="mt-15">Select Course</label>
       <select id="certCourseId">${courses.map(c => `<option value="${escapeAttr(c.id)}">${escapeHtml(c.title)}</option>`).join('')}</select>
+      ${courses.length === 0 ? '<p class="tiny danger-text mt-5">Student is not enrolled in any of your courses.</p>' : ''}
       <p class="small mt-10">This will generate a official PDF certificate and award it to the student.</p>
       <div class="flex gap-10 mt-15">
-        <button class="button w-auto px-30" id="issueCertBtn" onclick="issueCert('${escapeAttr(studentEmail)}')">Issue & Generate PDF</button>
+        <button class="button w-auto px-30" id="issueCertBtn" onclick="issueCert('${escapeAttr(studentEmail)}')" ${courses.length === 0 ? 'disabled' : ''}>Issue & Generate PDF</button>
         <button class="button secondary w-auto px-30" onclick="document.getElementById('certFormArea').classList.add('hidden')">Cancel</button>
       </div>
     </div>

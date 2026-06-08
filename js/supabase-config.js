@@ -692,68 +692,78 @@ class SupabaseDB {
     }
 
     static async deleteEnrollment(courseId, studentEmail) {
-        // Thorough cleanup: Delete all related student history for this course
-        // Using Exhaustive bypass of pagination for all related record identification
-        try {
-            const [assignments, quizzes, liveClasses, certificates] = await Promise.all([
-                this._getAll(supabaseClient.from('assignments').select('id').eq('course_id', courseId)),
-                this._getAll(supabaseClient.from('quizzes').select('id').eq('course_id', courseId)),
-                this._getAll(supabaseClient.from('live_classes').select('id').eq('course_id', courseId)),
-                this._getAll(supabaseClient.from('certificates').select('certificate_url').match({ course_id: courseId, student_email: studentEmail }))
-            ]);
+        return this._request(async () => {
+            // Thorough cleanup: Delete all related student history for this course
+            // Using Exhaustive bypass of pagination for all related record identification
+            try {
+                const [assignments, quizzes, liveClasses, certificates] = await Promise.all([
+                    this._getAll(supabaseClient.from('assignments').select('id').eq('course_id', courseId)),
+                    this._getAll(supabaseClient.from('quizzes').select('id').eq('course_id', courseId)),
+                    this._getAll(supabaseClient.from('live_classes').select('id').eq('course_id', courseId)),
+                    this._getAll(supabaseClient.from('certificates').select('certificate_url').match({ course_id: courseId, student_email: studentEmail }))
+                ]);
 
-            const assignIds = assignments.map(a => a.id);
-            const quizIds = quizzes.map(q => q.id);
-            const classIds = liveClasses.map(lc => lc.id);
+                const assignIds = assignments.map(a => a.id);
+                const quizIds = quizzes.map(q => q.id);
+                const classIds = liveClasses.map(lc => lc.id);
 
-            // 1. Delete Submissions (including storage cleanup for files)
-            for (const aid of assignIds) {
-                await this.deleteSubmission(aid, studentEmail);
+                // 1. Delete Submissions (including storage cleanup for files)
+                for (const aid of assignIds) {
+                    try { await this.deleteSubmission(aid, studentEmail); } catch(e) { console.warn(`Sub cleanup failed for ${aid}:`, e); }
+                }
+
+                // 2. Delete Quiz Submissions
+                if (quizIds.length > 0) {
+                    const { error: qsErr } = await supabaseClient.from('quiz_submissions').delete().eq('student_email', studentEmail).in('quiz_id', quizIds);
+                    if (qsErr) console.warn('Quiz sub cleanup failed:', qsErr);
+                }
+
+                // 3. Delete Attendance records
+                if (classIds.length > 0) {
+                    const { error: attErr } = await supabaseClient.from('attendance').delete().eq('student_email', studentEmail).in('live_class_id', classIds);
+                    if (attErr) console.warn('Attendance cleanup failed:', attErr);
+                }
+
+                // 4. Delete Study Sessions
+                const { error: ssErr } = await supabaseClient.from('study_sessions').delete().match({ course_id: courseId, user_email: studentEmail });
+                if (ssErr) console.warn('Study session cleanup failed:', ssErr);
+
+                // 5. Delete Discussions
+                const { error: discErr } = await supabaseClient.from('discussions').delete().match({ course_id: courseId, user_email: studentEmail });
+                if (discErr) console.warn('Discussion cleanup failed:', discErr);
+
+                // 6. Delete Violations (Anti-cheat events)
+                const { error: vioErr } = await supabaseClient.from('violations').delete().match({ course_id: courseId, user_email: studentEmail });
+                if (vioErr) console.warn('Violation cleanup failed:', vioErr);
+
+                // 7. Delete Certificates and associated PDF files
+                for (const cert of certificates) {
+                    if (cert.certificate_url) try { await this.deleteFileByUrl(cert.certificate_url); } catch(e) { console.warn('Cert file cleanup failed:', e); }
+                }
+                const { error: certErr } = await supabaseClient.from('certificates').delete().match({ course_id: courseId, student_email: studentEmail });
+                if (certErr) console.warn('Cert record cleanup failed:', certErr);
+
+            } catch (e) {
+                console.warn('Identification of cleanup records failed:', e);
+                // We proceed to try delete the enrollment anyway, as that's the primary goal.
             }
 
-            // 2. Delete Quiz Submissions
-            if (quizIds.length > 0) {
-                await supabaseClient.from('quiz_submissions').delete().eq('student_email', studentEmail).in('quiz_id', quizIds);
-            }
+            const { error } = await supabaseClient
+                .from('enrollments')
+                .delete()
+                .match({ course_id: courseId, student_email: studentEmail });
+            if (error) throw error;
 
-            // 3. Delete Attendance records
-            if (classIds.length > 0) {
-                await supabaseClient.from('attendance').delete().eq('student_email', studentEmail).in('live_class_id', classIds);
-            }
-
-            // 4. Delete Study Sessions
-            await supabaseClient.from('study_sessions').delete().match({ course_id: courseId, user_email: studentEmail });
-
-            // 5. Delete Discussions
-            await supabaseClient.from('discussions').delete().match({ course_id: courseId, user_email: studentEmail });
-
-            // 6. Delete Violations (Anti-cheat events)
-            await supabaseClient.from('violations').delete().match({ course_id: courseId, user_email: studentEmail });
-
-            // 7. Delete Certificates and associated PDF files
-            for (const cert of certificates) {
-                if (cert.certificate_url) await this.deleteFileByUrl(cert.certificate_url);
-            }
-            await supabaseClient.from('certificates').delete().match({ course_id: courseId, student_email: studentEmail });
-
-        } catch (e) {
-            console.warn('History cleanup during unenrollment partially failed:', e);
-        }
-
-        const { error } = await supabaseClient
-            .from('enrollments')
-            .delete()
-            .match({ course_id: courseId, student_email: studentEmail });
-        if (error) throw error;
-
-        // Invalidate relevant caches
-        _cache.invalidate(`enrollments_${studentEmail}`);
-        _cache.invalidate(`enrolled_courses_${studentEmail}`);
-        _cache.invalidate('submissions');
-        _cache.invalidate('violations');
-        _cache.invalidate('study_sessions');
-        _cache.invalidate('attendance');
-        _cache.invalidate(); // Broad invalidation for quizzes/discussions
+            // Invalidate relevant caches
+            _cache.invalidate(`enrollments_${studentEmail}`);
+            _cache.invalidate(`enrolled_courses_${studentEmail}`);
+            _cache.invalidate('submissions');
+            _cache.invalidate('violations');
+            _cache.invalidate('study_sessions');
+            _cache.invalidate('attendance');
+            _cache.invalidate(); // Broad invalidation for quizzes/discussions
+            return true;
+        });
     }
 
     static async markLessonComplete(courseId, studentEmail, lessonId) {
