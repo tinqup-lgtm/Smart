@@ -1,12 +1,21 @@
-let activeCountdowns = [];
-let quizTimer = null;
-let isStartingQuiz = false;
-let isSubmittingQuiz = false;
-
+const StudentState = {
+  activeCountdowns: [],
+  quizTimer: null,
+  isStartingQuiz: false,
+  isSubmittingQuiz: false,
+  studyInterval: null,
+  studyStartTime: null,
+  currentStudyCourseId: null,
+  currentQuiz: null,
+  currentSubmission: null,
+  currentQuestionIndex: 0,
+  currentQuizQuestions: [],
+  quizDebounceTimer: null
+};
 
 function clearActiveCountdowns() {
-    UI.clearCountdowns(activeCountdowns, quizTimer);
-    quizTimer = null;
+    UI.clearCountdowns(StudentState.activeCountdowns, StudentState.quizTimer);
+    StudentState.quizTimer = null;
 }
 
 async function updateHeaderStats() {
@@ -178,9 +187,12 @@ async function renderMyCourses() {
   }
 }
 async function enroll(courseId) {
+  const renderId = window.currentRenderId;
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const course = await SupabaseDB.getCourse(courseId);
+    if (renderId !== window.currentRenderId) return;
 
     let enrollmentId = null;
     if (course.enrollment_id) {
@@ -214,6 +226,7 @@ async function enroll(courseId) {
     }
 
     await SupabaseDB.enrollInCourse(courseId, user.email, enrollmentId);
+    if (renderId !== window.currentRenderId) return;
     UI.showNotification('Successfully enrolled!', 'success');
     renderCourses();
   } catch (e) {
@@ -223,7 +236,7 @@ async function enroll(courseId) {
 async function viewCourse(courseId, fromMyCourses = false) {
   const renderId = ++window.currentRenderId;
   // Ensure any active study session is stopped if navigating to course view
-  if (studyInterval) await stopStudySession();
+  if (StudentState.studyInterval) await stopStudySession();
 
   try {
   const course = await SupabaseDB.getCourse(courseId);
@@ -375,7 +388,7 @@ async function showLesson(lessonId, courseId, fromMyCourses = false) {
 }
 
 async function stopAndNavigateToViewCourse(courseId, fromMyCourses) {
-  if (studyInterval) await stopStudySession();
+  if (StudentState.studyInterval) await stopStudySession();
   viewCourse(courseId, fromMyCourses);
 }
 window.stopAndNavigateToViewCourse = stopAndNavigateToViewCourse;
@@ -498,7 +511,7 @@ async function renderAssignments(openId = null){
       compact: true,
       label: 'Opens in:',
       onEnd: () => renderAssignments()
-  }).forEach(c => activeCountdowns.push(c));
+  }).forEach(c => StudentState.activeCountdowns.push(c));
 
   Countdown.createAll('.assign-due-countdown', {
       showProgress: true,
@@ -509,7 +522,7 @@ async function renderAssignments(openId = null){
               renderAssignments();
           }
       }
-  }).forEach(c => activeCountdowns.push(c));
+  }).forEach(c => StudentState.activeCountdowns.push(c));
 
   if (openId) {
       showAssignmentForm(openId);
@@ -526,6 +539,7 @@ async function renderAssignments(openId = null){
 }
 
 async function showAssignmentForm(assignmentId) {
+  const renderId = window.currentRenderId;
   const formWrap = document.getElementById('assignmentForm');
   if (formWrap) {
       formWrap.classList.remove('hidden');
@@ -534,10 +548,12 @@ async function showAssignmentForm(assignmentId) {
   }
 
   const user = await SessionManager.getCurrentUser();
+  if (renderId !== window.currentRenderId) return;
   const [a, submission] = await Promise.all([
     SupabaseDB.getAssignment(assignmentId),
     SupabaseDB.getSubmission(assignmentId, user.email)
   ]);
+  if (renderId !== window.currentRenderId) return;
 
   const now = new Date();
   const startAt = a.start_at ? new Date(a.start_at) : null;
@@ -830,7 +846,7 @@ async function renderDashboardOverview() {
         compact: true,
         label: 'Due in:',
         onEnd: () => renderDashboardOverview()
-    }).forEach(c => activeCountdowns.push(c));
+    }).forEach(c => StudentState.activeCountdowns.push(c));
   } catch (error) {
     console.error('Dashboard error:', error);
     container.innerHTML = `<div class="stat-card danger">
@@ -898,28 +914,25 @@ async function renderProgress() {
   }
 }
 
-let studyInterval = null;
-let studyStartTime = null;
-let currentStudyCourseId = null;
 
 async function startStudySession(courseId) {
-    if (studyInterval) {
-        if (currentStudyCourseId === courseId) return;
+    if (StudentState.studyInterval) {
+        if (StudentState.currentStudyCourseId === courseId) return;
         await stopStudySession();
     }
 
-    currentStudyCourseId = courseId;
-    studyStartTime = new Date();
+    StudentState.currentStudyCourseId = courseId;
+    StudentState.studyStartTime = new Date();
 
-    if (!studyInterval) {
+    if (!StudentState.studyInterval) {
         // Start
-        studyStartTime = new Date();
+        StudentState.studyStartTime = new Date();
         const display = document.getElementById('studyTimerDisplay');
         if (display) display.style.display = 'block';
     }
 
-    studyInterval = setInterval(() => {
-        const elapsed = Math.floor((new Date() - studyStartTime) / 1000);
+    StudentState.studyInterval = setInterval(() => {
+        const elapsed = Math.floor((new Date() - StudentState.studyStartTime) / 1000);
         const h = Math.floor(elapsed / 3600).toString().padStart(2, '0');
         const m = Math.floor((elapsed % 3600) / 60).toString().padStart(2, '0');
         const s = (elapsed % 60).toString().padStart(2, '0');
@@ -929,15 +942,15 @@ async function startStudySession(courseId) {
 }
 
 async function stopStudySession() {
-    if (!studyInterval) return;
+    if (!StudentState.studyInterval) return;
 
-    const _startTime = studyStartTime;
-    const _courseId = currentStudyCourseId;
+    const _startTime = StudentState.studyStartTime;
+    const _courseId = StudentState.currentStudyCourseId;
 
-    clearInterval(studyInterval);
-    studyInterval = null;
-    studyStartTime = null;
-    currentStudyCourseId = null;
+    clearInterval(StudentState.studyInterval);
+    StudentState.studyInterval = null;
+    StudentState.studyStartTime = null;
+    StudentState.currentStudyCourseId = null;
 
     const endTime = new Date();
     const duration = Math.floor((endTime - _startTime) / 1000);
@@ -1186,17 +1199,12 @@ async function renderDiscussions() {
     const { data: myCourses } = await SupabaseDB.getEnrolledCourses(user.email);
     if (renderId !== window.currentRenderId) return;
 
-  container.innerHTML = `
-    <h2 class="m-0">Discussions</h2>
-    <div class="grid mt-20">
-      ${myCourses.map(c => `
-        <div class="card">
-          <h3 class="m-0">${escapeHtml(c.title)}</h3>
-          <button class="button w-auto mt-15" onclick="viewStudentDiscussions('${c.id}')">View Discussion</button>
-        </div>
-      `).join('') || '<div class="empty">Enroll in a course to join discussions.</div>'}
-    </div>
-  `;
+    UI.renderCourseList('pageContent', myCourses, {
+        title: 'Discussions',
+        buttonText: 'View Discussion',
+        onButtonClick: (id) => viewStudentDiscussions(id),
+        emptyMessage: 'Enroll in a course to join discussions.'
+    });
   } catch (e) {
     console.error('Discussions render error:', e);
     container.innerHTML = `<div class="empty">Error loading discussions.</div>`;
@@ -1513,7 +1521,7 @@ async function renderLiveClasses() {
         showProgress: true,
         label: 'Starts in:',
         onEnd: () => renderLiveClasses()
-    }).forEach(c => activeCountdowns.push(c));
+    }).forEach(c => StudentState.activeCountdowns.push(c));
 
   } catch (error) {
     console.error('Live Classes error:', error);
@@ -1715,25 +1723,19 @@ window.renderLiveClasses = renderLiveClasses;
 async function renderHelp() {
   const renderId = ++window.currentRenderId;
   clearActiveCountdowns();
-  const content = document.getElementById('pageContent');
-  if (!content) return;
-
-  content.innerHTML = `
-    <div class="flex-between mb-20">
-        <h2 class="m-0">Help & Support</h2>
-    </div>
-    <div id="helpContainer"></div>
-  `;
-  HelpSystem.renderHelpCenter('helpContainer', 'student');
+  if (renderId !== window.currentRenderId) return;
+  UI.renderHelp('pageContent', 'student');
 }
 
 async function renderSettings() {
     const renderId = ++window.currentRenderId;
     clearActiveCountdowns();
+    if (renderId !== window.currentRenderId) return;
     SettingsManager.render('Enable real-time desktop notifications for assignment updates, grades, and new course content.');
 }
 
 async function viewStudentAssessmentReport(assessmentId, title) {
+  const renderId = window.currentRenderId;
   const area = document.getElementById('violationDetailArea');
   if (!area) return;
   area.innerHTML = `<div class="loading-spinner"></div>`;
@@ -1741,7 +1743,9 @@ async function viewStudentAssessmentReport(assessmentId, title) {
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const { data: violations } = await SupabaseDB.getViolations(assessmentId, user.email);
+    if (renderId !== window.currentRenderId) return;
 
     area.innerHTML = `
       <div class="card">
@@ -1773,44 +1777,12 @@ async function renderAntiCheat() {
     const { data: summary } = await SupabaseDB.getStudentViolationSummary(user.email);
     if (renderId !== window.currentRenderId) return;
 
-    content.innerHTML = `
-      <div class="card flex-between">
-        <div>
-            <h2 class="m-0">Security & Integrity Dashboard</h2>
-            <p class="small text-muted mt-5">Overview of assessments where security events were recorded.</p>
-        </div>
-        <button class="button w-auto secondary" onclick="renderAntiCheat()">Refresh Summary</button>
-      </div>
-
-      <div class="grid mt-20">
-        ${summary.map(s => {
-            const risk = s.criticalCount > 0 ? 'High' : (s.violationCount > 5 ? 'Medium' : 'Low');
-            return `
-            <div class="card">
-                <div class="flex-between">
-                    <span class="badge ${s.type === 'quiz' ? 'badge-purple' : 'badge-warn'} tiny">${s.type.toUpperCase()}</span>
-                    <span class="badge ${risk === 'High' ? 'badge-inactive' : (risk === 'Medium' ? 'badge-warn' : 'badge-active')} tiny">${risk} RISK</span>
-                </div>
-                <h3 class="m-0 mt-10" title="${escapeAttr(s.title)}">${escapeHtml(s.title.substring(0, 30))}${s.title.length > 30 ? '...' : ''}</h3>
-
-                <div class="stats-grid mt-15 mb-0" style="grid-template-columns: 1fr 1fr; gap: 10px">
-                    <div class="stat-card p-10" style="padding: 10px; border-radius: 6px">
-                        <h4>Violations</h4>
-                        <div class="value" style="font-size: 1.2rem">${s.violationCount}</div>
-                    </div>
-                    <div class="stat-card p-10" style="padding: 10px; border-radius: 6px">
-                        <h4>Integrity Score</h4>
-                        <div class="value" style="font-size: 1.2rem">${s.totalScore}</div>
-                    </div>
-                </div>
-
-                <button class="button secondary small mt-15" onclick="viewStudentAssessmentReport('${s.id}', '${escapeAttr(s.title)}')">View Detailed Report</button>
-            </div>
-            `;
-        }).join('') || '<div class="empty" style="grid-column: 1/-1">No security violations recorded for your account.</div>'}
-      </div>
-      <div id="violationDetailArea" class="mt-20"></div>
-    `;
+    UI.renderAntiCheatSummary('pageContent', summary, {
+        title: 'Security & Integrity Dashboard',
+        isStudent: true,
+        onViewDetails: (id, title) => viewStudentAssessmentReport(id, title),
+        onRefresh: () => renderAntiCheat()
+    });
   } catch (error) {
     console.error('AntiCheat error:', error);
     content.innerHTML = `<div class="card danger-border"><h3>Error Loading Record</h3></div>`;
@@ -1930,7 +1902,7 @@ async function renderQuizzes(openId = null) {
                 renderQuizzes();
             }
         }
-    }).forEach(c => activeCountdowns.push(c));
+    }).forEach(c => StudentState.activeCountdowns.push(c));
 
     if (openId) {
         startQuiz(openId);
@@ -1945,14 +1917,11 @@ async function renderQuizzes(openId = null) {
   }
 }
 
-let currentQuiz = null;
-let currentSubmission = null;
-let currentQuestionIndex = 0;
-let currentQuizQuestions = [];
 
 async function startQuiz(quizId) {
-  if (isStartingQuiz) return;
-  isStartingQuiz = true;
+  const renderId = ++window.currentRenderId;
+  if (StudentState.isStartingQuiz) return;
+  StudentState.isStartingQuiz = true;
 
   const listBtn = document.getElementById(`quiz-btn-${quizId}`);
   if (listBtn) {
@@ -1969,7 +1938,9 @@ async function startQuiz(quizId) {
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const quiz = await SupabaseDB.getQuiz(quizId);
+    if (renderId !== window.currentRenderId) return;
 
     const now = TimerManager.getTime();
     const startAt = quiz.start_at ? new Date(quiz.start_at).getTime() : 0;
@@ -1988,14 +1959,14 @@ async function startQuiz(quizId) {
         return;
     }
 
-    currentQuiz = quiz;
-    currentQuestionIndex = 0;
-    currentQuizQuestions = quiz.questions.map((q, idx) => ({ ...q, originalIdx: idx }));
+    StudentState.currentQuiz = quiz;
+    StudentState.currentQuestionIndex = 0;
+    StudentState.currentQuizQuestions = quiz.questions.map((q, idx) => ({ ...q, originalIdx: idx }));
 
     if (quiz.shuffle_questions) {
-        for (let i = currentQuizQuestions.length - 1; i > 0; i--) {
+        for (let i = StudentState.currentQuizQuestions.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
-            [currentQuizQuestions[i], currentQuizQuestions[j]] = [currentQuizQuestions[j], currentQuizQuestions[i]];
+            [StudentState.currentQuizQuestions[i], StudentState.currentQuizQuestions[j]] = [StudentState.currentQuizQuestions[j], StudentState.currentQuizQuestions[i]];
         }
     }
 
@@ -2053,11 +2024,12 @@ async function startQuiz(quizId) {
     }
 
     // Authoritative start via RPC
-    currentSubmission = await SupabaseDB.startQuizAttempt(quizId);
+    StudentState.currentSubmission = await SupabaseDB.startQuizAttempt(quizId);
+    if (renderId !== window.currentRenderId) return;
 
     // Calculate deadline once to avoid redundancy
     let actualDeadline = Infinity;
-    const startTs = new Date(currentSubmission.started_at).getTime();
+    const startTs = new Date(StudentState.currentSubmission.started_at).getTime();
 
     if (quiz.time_limit > 0 || endAt !== Infinity) {
         const limitEnd = quiz.time_limit > 0 ? startTs + (quiz.time_limit * 60 * 1000) : Infinity;
@@ -2074,7 +2046,7 @@ async function startQuiz(quizId) {
     renderQuizQuestion(0);
 
     if (actualDeadline !== Infinity) {
-      quizTimer = Countdown.create('#quizTimerDisplay', {
+      StudentState.quizTimer = Countdown.create('#quizTimerDisplay', {
           targetDate: actualDeadline,
           referenceDate: startTs,
           showProgress: true,
@@ -2099,7 +2071,7 @@ async function startQuiz(quizId) {
           listBtn.textContent = 'Start New Attempt';
       }
   } finally {
-      isStartingQuiz = false;
+      StudentState.isStartingQuiz = false;
   }
 }
 
@@ -2109,7 +2081,7 @@ function renderQuizShell() {
         <div class="card quiz-taking-container" style="max-width: 800px; margin: 0 auto; position: relative;">
             <div class="quiz-header flex-between mb-20 p-10" style="position: sticky; top:0; background:#fff; z-index:10; border-bottom:1px solid var(--border)">
                 <div>
-                    <h3 class="m-0">${escapeHtml(currentQuiz.title)}</h3>
+                    <h3 class="m-0">${escapeHtml(StudentState.currentQuiz.title)}</h3>
                     <div id="quizSaveStatus" class="tiny text-muted" style="height:15px"></div>
                 </div>
                 <div id="quizTimerDisplay" class="bold danger-text" style="font-size:1.1rem"></div>
@@ -2117,7 +2089,7 @@ function renderQuizShell() {
 
             <div class="quiz-progress-wrapper mb-20">
                 <div class="flex-between mb-5">
-                    <span class="small text-muted" id="qCounter">Question 1 of ${currentQuizQuestions.length}</span>
+                    <span class="small text-muted" id="qCounter">Question 1 of ${StudentState.currentQuizQuestions.length}</span>
                     <span class="small text-muted" id="pPercentage">0%</span>
                 </div>
                 <div class="progress-container" style="height: 6px; background: #edf2f7; border-radius: 3px; overflow: hidden;">
@@ -2139,14 +2111,14 @@ function renderQuizShell() {
 }
 
 function renderQuizQuestion(index) {
-    currentQuestionIndex = index;
-    const q = currentQuizQuestions[index];
+    StudentState.currentQuestionIndex = index;
+    const q = StudentState.currentQuizQuestions[index];
     const qIdx = q.originalIdx;
     const container = document.getElementById('questionContainer');
     if (!container) return;
 
-    const progress = Math.round(((index + 1) / currentQuizQuestions.length) * 100);
-    document.getElementById('qCounter').textContent = `Question ${index + 1} of ${currentQuizQuestions.length}`;
+    const progress = Math.round(((index + 1) / StudentState.currentQuizQuestions.length) * 100);
+    document.getElementById('qCounter').textContent = `Question ${index + 1} of ${StudentState.currentQuizQuestions.length}`;
     document.getElementById('pPercentage').textContent = `${progress}%`;
     document.getElementById('quizProgressBar').style.width = `${progress}%`;
 
@@ -2154,7 +2126,7 @@ function renderQuizQuestion(index) {
     const nextBtn = document.getElementById('nextBtn');
     const submitBtn = document.getElementById('finalSubmitBtn');
 
-    if (index === currentQuizQuestions.length - 1) {
+    if (index === StudentState.currentQuizQuestions.length - 1) {
         nextBtn.classList.add('hidden');
         submitBtn.classList.remove('hidden');
     } else {
@@ -2162,7 +2134,7 @@ function renderQuizQuestion(index) {
         submitBtn.classList.add('hidden');
     }
 
-    const savedAnswer = currentSubmission.answers[qIdx];
+    const savedAnswer = StudentState.currentSubmission.answers[qIdx];
     let inputHtml = '';
 
     if (q.type === 'mcq') {
@@ -2217,7 +2189,7 @@ function renderQuizQuestion(index) {
 }
 
 function selectQuizOption(el, qIdx, value) {
-    const indexAtClick = currentQuestionIndex;
+    const indexAtClick = StudentState.currentQuestionIndex;
     const cards = el.parentElement.querySelectorAll('.quiz-option-card');
     cards.forEach(c => {
         c.classList.remove('selected');
@@ -2231,12 +2203,12 @@ function selectQuizOption(el, qIdx, value) {
     const marker = el.querySelector('.option-marker');
     if (marker) { marker.style.background = 'var(--purple)'; marker.style.color = '#fff'; }
 
-    currentSubmission.answers[qIdx] = value;
+    StudentState.currentSubmission.answers[qIdx] = value;
     autoSubmitQuiz();
 
-    if (currentQuestionIndex < currentQuizQuestions.length - 1) {
+    if (StudentState.currentQuestionIndex < StudentState.currentQuizQuestions.length - 1) {
         setTimeout(() => {
-            if (currentQuestionIndex === indexAtClick) {
+            if (StudentState.currentQuestionIndex === indexAtClick) {
                  navigateQuestion(1);
             }
         }, 800);
@@ -2244,32 +2216,31 @@ function selectQuizOption(el, qIdx, value) {
 }
 
 function handleShortAnswer(input, qIdx) {
-    currentSubmission.answers[qIdx] = input.value;
+    StudentState.currentSubmission.answers[qIdx] = input.value;
     autoSubmitQuiz();
 }
 
 function navigateQuestion(dir) {
-    const newIndex = currentQuestionIndex + dir;
-    if (newIndex >= 0 && newIndex < currentQuizQuestions.length) {
+    const newIndex = StudentState.currentQuestionIndex + dir;
+    if (newIndex >= 0 && newIndex < StudentState.currentQuizQuestions.length) {
         renderQuizQuestion(newIndex);
     }
 }
 
 window.navigateQuestion = navigateQuestion;
 
-let quizDebounceTimer = null;
 async function autoSubmitQuiz() {
-  if (isSubmittingQuiz || !currentSubmission || currentSubmission.status !== 'in-progress') return;
+  if (StudentState.isSubmittingQuiz || !StudentState.currentSubmission || StudentState.currentSubmission.status !== 'in-progress') return;
 
   const statusEl = document.getElementById('quizSaveStatus');
   if (statusEl) statusEl.textContent = 'Unsaved changes...';
 
-  if (quizDebounceTimer) clearTimeout(quizDebounceTimer);
-  quizDebounceTimer = setTimeout(async () => {
+  if (StudentState.quizDebounceTimer) clearTimeout(StudentState.quizDebounceTimer);
+  StudentState.quizDebounceTimer = setTimeout(async () => {
       try {
         if (statusEl) statusEl.textContent = 'Saving...';
-        const res = await SupabaseDB.saveQuizSubmission(currentSubmission);
-        if (res) currentSubmission = res;
+        const res = await SupabaseDB.saveQuizSubmission(StudentState.currentSubmission);
+        if (res) StudentState.currentSubmission = res;
         if (statusEl) {
             statusEl.textContent = 'All changes saved.';
             setTimeout(() => { if(statusEl && statusEl.textContent === 'All changes saved.') statusEl.textContent = ''; }, 3000);
@@ -2282,16 +2253,17 @@ async function autoSubmitQuiz() {
 }
 
 async function submitQuiz(isAuto = false) {
-  if (isSubmittingQuiz) return;
-  isSubmittingQuiz = true;
+  const renderId = window.currentRenderId;
+  if (StudentState.isSubmittingQuiz) return;
+  StudentState.isSubmittingQuiz = true;
 
-  // Immediately update status in-memory to prevent autosave races even if isSubmittingQuiz flag is bypassed
-  const previousStatus = currentSubmission?.status;
-  if (currentSubmission) currentSubmission.status = 'submitted';
+  // Immediately update status in-memory to prevent autosave races even if StudentState.isSubmittingQuiz flag is bypassed
+  const previousStatus = StudentState.currentSubmission?.status;
+  if (StudentState.currentSubmission) StudentState.currentSubmission.status = 'submitted';
 
   if (!isAuto && !confirm('Are you sure you want to submit your quiz?')) {
-      if (currentSubmission) currentSubmission.status = previousStatus || 'in-progress';
-      isSubmittingQuiz = false;
+      if (StudentState.currentSubmission) StudentState.currentSubmission.status = previousStatus || 'in-progress';
+      StudentState.isSubmittingQuiz = false;
       return;
   }
 
@@ -2301,7 +2273,7 @@ async function submitQuiz(isAuto = false) {
       btn.textContent = 'Submitting...';
   }
 
-  const quizId = currentQuiz?.id;
+  const quizId = StudentState.currentQuiz?.id;
   const listBtn = quizId ? document.getElementById(`quiz-btn-${quizId}`) : null;
   if (listBtn) {
       listBtn.disabled = true;
@@ -2311,36 +2283,37 @@ async function submitQuiz(isAuto = false) {
   UI.showLoading('quizArea', 'Saving your answers and calculating score...');
   AntiCheat.destroy();
 
-  if (quizTimer instanceof Countdown) {
-    quizTimer.destroy();
-    quizTimer = null;
+  if (StudentState.quizTimer instanceof Countdown) {
+    StudentState.quizTimer.destroy();
+    StudentState.quizTimer = null;
   }
-  if (quizDebounceTimer) {
-    clearTimeout(quizDebounceTimer);
-    quizDebounceTimer = null;
+  if (StudentState.quizDebounceTimer) {
+    clearTimeout(StudentState.quizDebounceTimer);
+    StudentState.quizDebounceTimer = null;
   }
 
   let user;
   try {
     user = await SessionManager.getCurrentUser();
-    const answers = currentSubmission?.answers || {};
+    const answers = StudentState.currentSubmission?.answers || {};
     const now = new Date();
-    const timeSpent = currentSubmission ? Math.round((now - new Date(currentSubmission.started_at)) / 1000) : 0;
+    const timeSpent = StudentState.currentSubmission ? Math.round((now - new Date(StudentState.currentSubmission.started_at)) / 1000) : 0;
 
     // Authoritative submission via RPC
-    const result = await SupabaseDB.submitQuizAttempt(currentSubmission.id, answers, timeSpent);
-    currentSubmission = result;
+    const result = await SupabaseDB.submitQuizAttempt(StudentState.currentSubmission.id, answers, timeSpent);
+    if (renderId !== window.currentRenderId) return;
+    StudentState.currentSubmission = result;
 
   } catch (err) {
       console.error('Quiz submission failed:', err);
       // Revert status to allow retry and continued autosave
-      if (currentSubmission) currentSubmission.status = 'in-progress';
+      if (StudentState.currentSubmission) StudentState.currentSubmission.status = 'in-progress';
       UI.showNotification('Quiz Submission Failed: ' + (err.message || 'Unknown error'), 'error');
       // If auto-submit failed, we might want to re-initiate anti-cheat or timer?
       // For now, just ensuring UI is unlocked.
   } finally {
-      isSubmittingQuiz = false;
-      if (!currentSubmission || currentSubmission.status !== 'submitted') {
+      StudentState.isSubmittingQuiz = false;
+      if (!StudentState.currentSubmission || StudentState.currentSubmission.status !== 'submitted') {
           if (btn) {
               btn.disabled = false;
               btn.textContent = 'Submit Quiz';
@@ -2354,18 +2327,18 @@ async function submitQuiz(isAuto = false) {
   }
 
   // If submission failed, stop execution here
-  if (!currentSubmission || currentSubmission.status !== 'submitted') return;
+  if (!StudentState.currentSubmission || StudentState.currentSubmission.status !== 'submitted') return;
 
-  if (currentQuiz) await SupabaseDB.updateCourseProgress(currentQuiz.course_id, user.email);
+  if (StudentState.currentQuiz) await SupabaseDB.updateCourseProgress(StudentState.currentQuiz.course_id, user.email);
 
   const quizArea = document.getElementById('quizArea');
   if (quizArea) {
-      const percentage = currentSubmission.score || 0;
-      const isPassed = percentage >= (currentQuiz.passing_score || 0);
-      const timeSpentFinal = currentSubmission.time_spent || 0;
+      const percentage = StudentState.currentSubmission.score || 0;
+      const isPassed = percentage >= (StudentState.currentQuiz.passing_score || 0);
+      const timeSpentFinal = StudentState.currentSubmission.time_spent || 0;
       const durationMin = Math.floor(timeSpentFinal / 60);
       const durationSec = timeSpentFinal % 60;
-      const avgTimePerQ = (timeSpentFinal / (currentQuiz.questions?.length || 1)).toFixed(1);
+      const avgTimePerQ = (timeSpentFinal / (StudentState.currentQuiz.questions?.length || 1)).toFixed(1);
 
       quizArea.innerHTML = `
         <div class="card text-center p-40">
@@ -2384,7 +2357,7 @@ async function submitQuiz(isAuto = false) {
                 </div>
                 <div>
                     <div class="small text-muted">Required</div>
-                    <div class="bold" style="font-size:2rem">${currentQuiz.passing_score || 0}%</div>
+                    <div class="bold" style="font-size:2rem">${StudentState.currentQuiz.passing_score || 0}%</div>
                 </div>
             </div>
 
@@ -2395,21 +2368,23 @@ async function submitQuiz(isAuto = false) {
 
             <div class="flex-center gap-10">
                 <button class="button w-auto px-40" onclick="renderQuizzes()">Back to Quizzes</button>
-                <button class="button secondary w-auto px-40" onclick="viewQuizResults('${quizId}', '${currentSubmission.id}')">View Detailed Results</button>
+                <button class="button secondary w-auto px-40" onclick="viewQuizResults('${quizId}', '${StudentState.currentSubmission.id}')">View Detailed Results</button>
             </div>
         </div>
       `;
       quizArea.scrollIntoView({ behavior: 'smooth' });
   }
 
-  currentQuiz = null;
-  currentSubmission = null;
+  StudentState.currentQuiz = null;
+  StudentState.currentSubmission = null;
 }
 
 async function viewQuizResults(quizId, submissionId = null) {
+  const renderId = ++window.currentRenderId;
   const user = await SessionManager.getCurrentUser();
   const quiz = await SupabaseDB.getQuiz(quizId);
   const { data: subs } = await SupabaseDB.getQuizSubmissions(quizId, user.email);
+  if (renderId !== window.currentRenderId) return;
 
   let targetSub;
   if (submissionId) {
@@ -2492,14 +2467,20 @@ async function viewQuizResults(quizId, submissionId = null) {
 }
 
 async function requestRegrade(assignmentId) {
+    const renderId = window.currentRenderId;
     const reason = document.getElementById('regradeReason').value;
     if (!reason) return UI.showNotification('Please provide a reason.');
 
     try {
         const user = await SessionManager.getCurrentUser();
+        if (renderId !== window.currentRenderId) return;
         const submission = await SupabaseDB.getSubmission(assignmentId, user.email);
+        if (renderId !== window.currentRenderId) return;
+
         submission.regrade_request = reason;
         await SupabaseDB.saveSubmission(submission);
+        if (renderId !== window.currentRenderId) return;
+
         UI.showNotification('Regrade request submitted!');
         viewFeedback(assignmentId);
     } catch (e) {
@@ -2509,11 +2490,15 @@ async function requestRegrade(assignmentId) {
 window.requestRegrade = requestRegrade;
 
 async function deleteSubmissionById(assignmentId, studentEmail) {
+  const renderId = window.currentRenderId;
   if (confirm('Are you sure you want to delete your submission? This action cannot be undone.')) {
     try {
       const a = await SupabaseDB.getAssignment(assignmentId);
+      if (renderId !== window.currentRenderId) return;
       await SupabaseDB.deleteSubmission(assignmentId, studentEmail);
+      if (renderId !== window.currentRenderId) return;
       if (a) await SupabaseDB.updateCourseProgress(a.course_id, studentEmail);
+      if (renderId !== window.currentRenderId) return;
       renderAssignments();
       UI.showNotification('Submission deleted successfully.');
     } catch (e) {
@@ -2523,6 +2508,7 @@ async function deleteSubmissionById(assignmentId, studentEmail) {
   }
 }
 async function submitAssignment(assignmentId, studentEmail, isDraft = false) {
+  const renderId = window.currentRenderId;
   const btn = isDraft ? document.getElementById('saveDraftBtn') : document.getElementById('submitAssignBtn');
   const otherBtn = isDraft ? document.getElementById('submitAssignBtn') : document.getElementById('saveDraftBtn');
   const questions = document.querySelectorAll(`#qwrap-${assignmentId} .question`);
@@ -2548,6 +2534,7 @@ async function submitAssignment(assignmentId, studentEmail, isDraft = false) {
 
   try {
     const existing = await SupabaseDB.getSubmission(assignmentId, studentEmail);
+    if (renderId !== window.currentRenderId) return;
     const answers = (existing && existing.answers) ? { ...existing.answers } : {};
 
     for (let idx = 0; idx < capturedAnswers.length; idx++) {
@@ -2564,7 +2551,9 @@ async function submitAssignment(assignmentId, studentEmail, isDraft = false) {
           const file = captured.file;
           const path = `submissions/${assignmentId}/${studentEmail}/${idx}_${Date.now()}_${file.name}`;
           await SupabaseDB.uploadFile('assignments', path, file);
+          if (renderId !== window.currentRenderId) return;
           answers[idx] = await SupabaseDB.getPublicUrl('assignments', path);
+          if (renderId !== window.currentRenderId) return;
       } else if (!isDraft && questions[idx].querySelector('.q-file') && !answers[idx]) {
           // If it's a file question, not a draft, and no existing file URL or newly selected file
           throw new Error(`Question ${idx + 1} requires a file upload.`);
@@ -2599,9 +2588,12 @@ async function submitAssignment(assignmentId, studentEmail, isDraft = false) {
     };
 
     if (await SupabaseDB.saveSubmission(submission)) {
+      if (renderId !== window.currentRenderId) return;
       // Update Progress
       const a = await SupabaseDB.getAssignment(assignmentId);
+      if (renderId !== window.currentRenderId) return;
       if (a) await SupabaseDB.updateCourseProgress(a.course_id, studentEmail);
+      if (renderId !== window.currentRenderId) return;
 
       UI.showNotification(isDraft ? 'Draft saved successfully!' : 'Assignment submitted successfully!', 'success');
       renderAssignments();
@@ -2619,11 +2611,11 @@ async function submitAssignment(assignmentId, studentEmail, isDraft = false) {
 }
 
 window.addEventListener('beforeunload', async (e) => {
-  if (currentQuiz && currentSubmission) {
+  if (StudentState.currentQuiz && StudentState.currentSubmission) {
     e.preventDefault();
     e.returnValue = 'You have an active quiz. Are you sure you want to leave?';
   }
-  if (studyInterval) {
+  if (StudentState.studyInterval) {
       // Browsers may not allow async in beforeunload, but we try a sync-like save or just let it go
       // In many cases, it's better to use beacon or just accept loss on hard close.
       // But we can try to call stopStudySession.
@@ -2639,7 +2631,7 @@ function initNav() {
         studentNav.querySelectorAll('button').forEach(b => b.classList.remove('active'));
         button.classList.add('active');
         const page = button.dataset.page;
-        if (studyInterval) await stopStudySession();
+        if (StudentState.studyInterval) await stopStudySession();
         if(page === 'courses') renderCourses();
         else if(page === 'my-courses') renderMyCourses();
         else if(page === 'assignments') renderAssignments();
@@ -2668,7 +2660,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initNav();
     NotificationManager.init();
     NotificationManager.initRealtimeSubscriptions(user.email, 'student', () => {
-        if (!currentQuiz) renderQuizzes();
+        if (!StudentState.currentQuiz) renderQuizzes();
     });
 
     // Deep linking support
