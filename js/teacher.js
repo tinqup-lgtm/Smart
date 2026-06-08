@@ -1223,20 +1223,13 @@ async function renderDiscussions() {
     const { data: courses } = await SupabaseDB.getCourses(user.email, null);
     if (renderId !== window.currentRenderId) return;
 
-    container.innerHTML = `
-    <div class="card">
-      <h2 class="m-0">Discussions</h2>
-      <p class="small mt-5">Manage discussions for your courses.</p>
-    </div>
-    <div class="grid">
-      ${courses.map(c => `
-        <div class="card">
-          <h3 class="m-0">${escapeHtml(c.title)}</h3>
-          <button class="button w-auto mt-10" onclick="viewCourseDiscussions('${escapeAttr(c.id)}')">View Discussions</button>
-        </div>
-      `).join('') || '<div class="empty">No courses found.</div>'}
-      </div>
-    `;
+    UI.renderCourseList('pageContent', courses || [], {
+        title: 'Discussions',
+        subtitle: 'Manage discussions for your courses.',
+        buttonText: 'View Discussions',
+        onButtonClick: (id) => viewCourseDiscussions(id),
+        emptyMessage: 'No courses found.'
+    });
   } catch (error) {
     console.error('Discussions error:', error);
     UI.showNotification('Error loading discussions: ' + error.message, 'error');
@@ -1289,28 +1282,7 @@ async function viewCourseDiscussions(courseId) {
 async function renderHelp() {
   const renderId = ++window.currentRenderId;
   clearActiveCountdowns();
-  const content = document.getElementById('pageContent');
-  if (!content) return;
-
-  try {
-    if (renderId !== window.currentRenderId) return;
-
-    content.innerHTML = `
-      <div class="flex-between mb-20">
-          <h2 class="m-0">Help & Support</h2>
-      </div>
-      <div id="helpContainer"></div>
-    `;
-    HelpSystem.renderHelpCenter('helpContainer', 'teacher');
-  } catch (error) {
-    console.error('Help error:', error);
-    UI.showNotification('Error loading help center: ' + error.message, 'error');
-    content.innerHTML = `<div class="card danger-border">
-      <h3>Error Loading Help Center</h3>
-      <div class="small danger-text">${escapeHtml(error.message)}</div>
-      <button class="button w-auto mt-10" onclick="renderHelp()">Retry</button>
-    </div>`;
-  }
+  UI.renderHelp('pageContent', 'teacher');
 }
 
 async function renderAntiCheat() {
@@ -1325,44 +1297,11 @@ async function renderAntiCheat() {
     const { data: summary } = await SupabaseDB.getViolationSummary(user.email);
     if (renderId !== window.currentRenderId) return;
 
-    content.innerHTML = `
-      <div class="card flex-between">
-        <div>
-            <h2 class="m-0">Security Monitoring</h2>
-            <p class="small text-muted mt-5">Overview of assessments with detected integrity violations.</p>
-        </div>
-        <button class="button w-auto secondary" onclick="renderAntiCheat()">Refresh Summary</button>
-      </div>
-
-      <div class="grid mt-20">
-        ${summary.map(s => {
-            const risk = s.criticalCount > 0 ? 'High' : (s.violationCount > 10 ? 'Medium' : 'Low');
-            return `
-            <div class="card">
-                <div class="flex-between">
-                    <span class="badge ${s.type === 'quiz' ? 'badge-purple' : 'badge-warn'} tiny">${s.type.toUpperCase()}</span>
-                    <span class="badge ${risk === 'High' ? 'badge-inactive' : (risk === 'Medium' ? 'badge-warn' : 'badge-active')} tiny">${risk} RISK</span>
-                </div>
-                <h3 class="m-0 mt-10" title="${escapeAttr(s.title)}">${escapeHtml(s.title.substring(0, 30))}${s.title.length > 30 ? '...' : ''}</h3>
-
-                <div class="stats-grid mt-15 mb-0" style="grid-template-columns: 1fr 1fr; gap: 10px">
-                    <div class="stat-card p-10" style="padding: 10px; border-radius: 6px">
-                        <h4>Violations</h4>
-                        <div class="value" style="font-size: 1.2rem">${s.violationCount}</div>
-                    </div>
-                    <div class="stat-card p-10" style="padding: 10px; border-radius: 6px; border-left-color: var(--ok)">
-                        <h4>Students</h4>
-                        <div class="value" style="font-size: 1.2rem">${s.studentCount}</div>
-                    </div>
-                </div>
-
-                <button class="button secondary small mt-15" onclick="viewAssessmentViolations('${s.id}', '${escapeAttr(s.title)}')">View Affected Students</button>
-            </div>
-            `;
-        }).join('') || '<div class="empty" style="grid-column: 1/-1">No integrity violations detected across your assessments.</div>'}
-      </div>
-      <div id="violationDetailArea" class="mt-20"></div>
-    `;
+    UI.renderAntiCheatSummary('pageContent', summary, {
+        title: 'Security Monitoring',
+        onViewDetails: (id, title) => viewAssessmentViolations(id, title),
+        onRefresh: () => renderAntiCheat()
+    });
   } catch (error) {
     console.error('AntiCheat error:', error);
     UI.showNotification('Error loading security summary: ' + error.message, 'error');

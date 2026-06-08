@@ -550,6 +550,121 @@ const UI = {
             </div>
         `;
         document.body.appendChild(backdrop);
+    },
+
+    renderHelp(containerId, role) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        container.innerHTML = `
+            <div class="flex-between mb-20">
+                <h2 class="m-0">Help & Support</h2>
+            </div>
+            <div id="helpContainer"></div>
+        `;
+        HelpSystem.renderHelpCenter('helpContainer', role);
+    },
+
+    renderCourseList(containerId, courses, options = {}) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        const {
+            title = 'Courses',
+            subtitle = '',
+            buttonText = 'View',
+            onButtonClick = (id) => {},
+            emptyMessage = 'No courses found.'
+        } = options;
+
+        container.innerHTML = `
+            <div class="card">
+                <h2 class="m-0">${escapeHtml(title)}</h2>
+                ${subtitle ? `<p class="small mt-5">${escapeHtml(subtitle)}</p>` : ''}
+            </div>
+            <div class="grid mt-20">
+                ${courses.map(c => `
+                    <div class="card">
+                        <h3 class="m-0">${escapeHtml(c.title)}</h3>
+                        <button class="button w-auto mt-10" onclick="UI._dispatchCourseAction('${containerId}', '${escapeAttr(c.id)}')">${escapeHtml(buttonText)}</button>
+                    </div>
+                `).join('') || `<div class="empty">${emptyMessage}</div>`}
+            </div>
+        `;
+
+        UI._courseOptions = UI._courseOptions || {};
+        UI._courseOptions[containerId] = onButtonClick;
+    },
+
+    _dispatchCourseAction(containerId, courseId) {
+        const fn = UI._courseOptions?.[containerId];
+        if (typeof fn === 'function') fn(courseId);
+    },
+
+    renderAntiCheatSummary(containerId, summary, options = {}) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        const {
+            title = 'Security Monitoring',
+            subtitle = 'Overview of assessments with detected integrity violations.',
+            onViewDetails = (id, title) => {},
+            onRefresh = () => {},
+            isStudent = false
+        } = options;
+
+        container.innerHTML = `
+            <div class="card flex-between">
+                <div>
+                    <h2 class="m-0">${escapeHtml(title)}</h2>
+                    <p class="small text-muted mt-5">${escapeHtml(subtitle)}</p>
+                </div>
+                <button class="button w-auto secondary" onclick="UI._dispatchACRefresh('${containerId}')">Refresh Summary</button>
+            </div>
+
+            <div class="grid mt-20">
+                ${summary.map(s => {
+                    const risk = s.criticalCount > 0 ? 'High' : (s.violationCount > (isStudent ? 5 : 10) ? 'Medium' : 'Low');
+                    return `
+                    <div class="card">
+                        <div class="flex-between">
+                            <span class="badge ${s.type === 'quiz' ? 'badge-purple' : 'badge-warn'} tiny">${s.type.toUpperCase()}</span>
+                            <span class="badge ${risk === 'High' ? 'badge-inactive' : (risk === 'Medium' ? 'badge-warn' : 'badge-active')} tiny">${risk} RISK</span>
+                        </div>
+                        <h3 class="m-0 mt-10" title="${escapeAttr(s.title)}">${escapeHtml(s.title.substring(0, 30))}${s.title.length > 30 ? '...' : ''}</h3>
+
+                        <div class="stats-grid mt-15 mb-0" style="grid-template-columns: 1fr 1fr; gap: 10px">
+                            <div class="stat-card p-10" style="padding: 10px; border-radius: 6px">
+                                <h4>Violations</h4>
+                                <div class="value" style="font-size: 1.2rem">${s.violationCount}</div>
+                            </div>
+                            <div class="stat-card p-10" style="padding: 10px; border-radius: 6px; ${!isStudent ? 'border-left-color: var(--ok)' : ''}">
+                                <h4>${isStudent ? 'Integrity Score' : 'Students'}</h4>
+                                <div class="value" style="font-size: 1.2rem">${isStudent ? s.totalScore : s.studentCount}</div>
+                            </div>
+                        </div>
+
+                        <button class="button secondary small mt-15" onclick="UI._dispatchACViewDetails('${containerId}', '${escapeAttr(s.id)}', '${escapeAttr(s.title)}')">
+                            ${isStudent ? 'View Detailed Report' : 'View Affected Students'}
+                        </button>
+                    </div>
+                    `;
+                }).join('') || `<div class="empty" style="grid-column: 1/-1">${isStudent ? 'No security violations recorded for your account.' : 'No integrity violations detected across your assessments.'}</div>`}
+            </div>
+            <div id="violationDetailArea" class="mt-20"></div>
+        `;
+
+        UI._acOptions = UI._acOptions || {};
+        UI._acOptions[containerId] = { onViewDetails, onRefresh };
+    },
+
+    _dispatchACRefresh(containerId) {
+        const opts = UI._acOptions?.[containerId];
+        if (opts?.onRefresh) opts.onRefresh();
+    },
+
+    _dispatchACViewDetails(containerId, id, title) {
+        const opts = UI._acOptions?.[containerId];
+        if (opts?.onViewDetails) opts.onViewDetails(id, title);
     }
 };
 

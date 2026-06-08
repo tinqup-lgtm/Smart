@@ -1988,16 +1988,7 @@ async function renderSettings() {
 
 async function renderHelp() {
   const renderId = ++window.currentRenderId;
-  const content = document.getElementById('pageContent');
-  if (!content) return;
-
-  content.innerHTML = `
-    <div class="flex-between mb-20">
-        <h2 class="m-0">System Help & Admin Support</h2>
-    </div>
-    <div id="helpContainer"></div>
-  `;
-  HelpSystem.renderHelpCenter('helpContainer', 'admin');
+  UI.renderHelp('pageContent', 'admin');
 }
 window.renderHelp = renderHelp;
 

@@ -105,16 +105,24 @@ class SupabaseDB {
         const sanitized = { ...payload };
 
         // 1. Explicitly strip virtual/internal fields that don't belong in database tables
+        // We also strip internal UI states (starting with _) to prevent leakage
         const VIRTUAL_FIELDS = ['password', 'session_id', 'has_secret', 'reset_data'];
         VIRTUAL_FIELDS.forEach(field => delete sanitized[field]);
 
         Object.keys(sanitized).forEach(key => {
             const value = sanitized[key];
-            // 2. Remove joined objects/arrays that are NOT known JSONB/Array columns
+
+            // 2. Remove internal state fields (keys starting with _)
+            if (key.startsWith('_')) {
+                delete sanitized[key];
+                return;
+            }
+
+            // 3. Remove joined objects/arrays that are NOT known JSONB/Array columns
             if (value !== null && typeof value === 'object' && !this.JSONB_COLUMNS.includes(key)) {
                 delete sanitized[key];
             }
-            // 3. Convert empty strings to null for better database integrity (especially FKs)
+            // 4. Convert empty strings to null for better database integrity (especially FKs)
             if (sanitized[key] === '') {
                 sanitized[key] = null;
             }
@@ -374,10 +382,17 @@ class SupabaseDB {
 
     static async deleteUser(email) {
         try {
-            // Cleanup files before deleting user record
+            // Cleanup all related enrollment data first (includes related files/storage)
+            const { data: enrollRes } = await this.getEnrollments(email);
+            const enrollments = enrollRes || [];
+            for (const e of enrollments) {
+                await this.deleteEnrollment(e.course_id, email);
+            }
+
+            // Cleanup files before deleting user record (orphans not tied to enrollments)
             const [{ data: certs }, { data: submissions }] = await Promise.all([
-                this.getCertificates(email),
-                this.getSubmissions(null, email)
+                this.getCertificates(email).catch(() => ({ data: [] })),
+                this.getSubmissions(null, email).catch(() => ({ data: [] }))
             ]);
 
             for (const cert of certs) {
