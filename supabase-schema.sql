@@ -657,6 +657,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION tr_notify_live_class() RETURNS TRIGGER AS $$
 BEGIN
+  IF is_admin() THEN RETURN NEW; END IF;
   IF (TG_OP = 'INSERT') THEN
     IF (NEW.status = 'scheduled') THEN
       PERFORM create_broadcast(NEW.course_id, 'student', 'Live Class Scheduled', 'A new live class "' || NEW.title || '" has been scheduled for ' || NEW.start_at, 'student.html?page=live', 'live_class');
@@ -679,6 +680,7 @@ CREATE TRIGGER tr_live_class_event AFTER INSERT OR UPDATE ON live_classes FOR EA
 
 CREATE OR REPLACE FUNCTION tr_notify_assignment() RETURNS TRIGGER AS $$
 BEGIN
+  IF is_admin() THEN RETURN NEW; END IF;
   IF (NEW.status = 'published' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status != 'published'))) THEN
     PERFORM create_broadcast(NEW.course_id, 'student', 'New Assignment', 'A new assignment "' || NEW.title || '" has been published.', 'student.html?page=assignments', 'assignment_published');
   END IF;
@@ -691,6 +693,7 @@ CREATE TRIGGER tr_assignment_published AFTER INSERT OR UPDATE ON assignments FOR
 
 CREATE OR REPLACE FUNCTION tr_notify_quiz() RETURNS TRIGGER AS $$
 BEGIN
+  IF is_admin() THEN RETURN NEW; END IF;
   IF (NEW.status = 'published' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status != 'published'))) THEN
     PERFORM create_broadcast(NEW.course_id, 'student', 'New Quiz Available', 'A new quiz "' || NEW.title || '" has been published.', 'student.html?page=quizzes', 'quiz_published');
   END IF;
@@ -705,6 +708,7 @@ CREATE OR REPLACE FUNCTION tr_notify_submission() RETURNS TRIGGER AS $$
 DECLARE
   v_teacher_email VARCHAR(255);
 BEGIN
+  IF is_admin() THEN RETURN NEW; END IF;
   SELECT c.teacher_email INTO v_teacher_email FROM courses c JOIN assignments a ON c.id = a.course_id WHERE a.id = NEW.assignment_id;
   IF (NEW.status = 'submitted' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status != 'submitted'))) THEN
     IF v_teacher_email IS NOT NULL THEN
@@ -722,6 +726,7 @@ CREATE OR REPLACE FUNCTION tr_notify_regrade_request() RETURNS TRIGGER AS $$
 DECLARE
   v_teacher_email VARCHAR(255);
 BEGIN
+  IF is_admin() THEN RETURN NEW; END IF;
   -- Only trigger if regrade_request is newly added or changed and not null
   IF (NEW.regrade_request IS NOT NULL AND (OLD.regrade_request IS NULL OR OLD.regrade_request != NEW.regrade_request)) THEN
     SELECT teacher_email INTO v_teacher_email FROM courses WHERE id = NEW.course_id;
@@ -738,6 +743,7 @@ CREATE TRIGGER tr_submission_regrade_request AFTER UPDATE ON submissions FOR EAC
 
 CREATE OR REPLACE FUNCTION tr_notify_grade() RETURNS TRIGGER AS $$
 BEGIN
+  IF is_admin() THEN RETURN NEW; END IF;
   IF (NEW.status = 'graded' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status != 'graded'))) THEN
     PERFORM notify_user(NEW.student_email, 'Assignment Graded', 'Your assignment has been graded. Score: ' || NEW.final_grade || '%', 'student.html?page=assignments', 'grade_posted');
   END IF;
@@ -750,6 +756,7 @@ CREATE TRIGGER tr_grade_posted AFTER INSERT OR UPDATE ON submissions FOR EACH RO
 
 CREATE OR REPLACE FUNCTION tr_notify_material_published() RETURNS TRIGGER AS $$
 BEGIN
+  IF is_admin() THEN RETURN NEW; END IF;
   IF (TG_OP = 'INSERT') THEN
     PERFORM create_broadcast(NEW.course_id, 'student', 'New Material Added', 'New learning material "' || NEW.title || '" has been uploaded.', 'student.html?page=materials', 'system');
   END IF;
@@ -815,6 +822,7 @@ FOR EACH ROW EXECUTE PROCEDURE tr_sync_course_children_owner();
 
 CREATE OR REPLACE FUNCTION tr_inherit_course_data() RETURNS TRIGGER AS $$
 BEGIN
+  IF is_admin() THEN RETURN NEW; END IF;
   -- 1. Populate course_id from parent assessments/classes if missing
   IF NEW.course_id IS NULL THEN
     IF TG_TABLE_NAME = 'submissions' THEN
@@ -2025,7 +2033,16 @@ CREATE OR REPLACE FUNCTION purge_expired_records()
 RETURNS TRIGGER AS $$
 DECLARE
   v_expired_cutoff TIMESTAMP WITH TIME ZONE := (NOW() - INTERVAL '90 days');
+  v_alerted_ids JSONB;
+  v_cleared_broadcasts JSONB;
+  v_read_broadcasts JSONB;
+  v_user_email VARCHAR;
 BEGIN
+    -- Bypass cleanup during admin-led restoration
+    IF is_admin() THEN
+        RETURN NULL;
+    END IF;
+
     DELETE FROM broadcasts WHERE expires_at < NOW();
     -- Hard limit: Delete all notifications older than 90 days
     DELETE FROM notifications WHERE created_at < v_expired_cutoff;
@@ -2035,23 +2052,30 @@ BEGIN
 
     -- Maintenance: Prune old tracking IDs from user metadata to prevent bloat
     -- We keep entries that still exist in the database (which are already pruned to 90 days)
-    UPDATE users
-    SET metadata = metadata || jsonb_build_object(
-        'alerted_ids', COALESCE((
-            SELECT jsonb_agg(id) FROM jsonb_array_elements_text(metadata->'alerted_ids') id
-            WHERE id::uuid IN (SELECT id FROM notifications UNION SELECT id FROM broadcasts)
-        ), '[]'::jsonb),
-        'cleared_broadcasts', COALESCE((
-            SELECT jsonb_agg(id) FROM jsonb_array_elements_text(metadata->'cleared_broadcasts') id
-            WHERE id::uuid IN (SELECT id FROM broadcasts)
-        ), '[]'::jsonb),
-        'read_broadcasts', COALESCE((
-            SELECT jsonb_agg(id) FROM jsonb_array_elements_text(metadata->'read_broadcasts') id
-            WHERE id::uuid IN (SELECT id FROM broadcasts)
-        ), '[]'::jsonb)
-    )
-    WHERE (metadata ? 'alerted_ids' OR metadata ? 'cleared_broadcasts' OR metadata ? 'read_broadcasts')
-    AND (email = get_auth_email_raw());
+    v_user_email := get_auth_email_raw();
+
+    IF v_user_email IS NOT NULL THEN
+        SELECT COALESCE(jsonb_agg(id), '[]'::jsonb) INTO v_alerted_ids
+        FROM users, jsonb_array_elements_text(metadata->'alerted_ids') id
+        WHERE email = v_user_email AND id::uuid IN (SELECT id FROM notifications UNION SELECT id FROM broadcasts);
+
+        SELECT COALESCE(jsonb_agg(id), '[]'::jsonb) INTO v_cleared_broadcasts
+        FROM users, jsonb_array_elements_text(metadata->'cleared_broadcasts') id
+        WHERE email = v_user_email AND id::uuid IN (SELECT id FROM broadcasts);
+
+        SELECT COALESCE(jsonb_agg(id), '[]'::jsonb) INTO v_read_broadcasts
+        FROM users, jsonb_array_elements_text(metadata->'read_broadcasts') id
+        WHERE email = v_user_email AND id::uuid IN (SELECT id FROM broadcasts);
+
+        UPDATE users
+        SET metadata = metadata || jsonb_build_object(
+            'alerted_ids', v_alerted_ids,
+            'cleared_broadcasts', v_cleared_broadcasts,
+            'read_broadcasts', v_read_broadcasts
+        )
+        WHERE email = v_user_email
+        AND (metadata ? 'alerted_ids' OR metadata ? 'cleared_broadcasts' OR metadata ? 'read_broadcasts');
+    END IF;
 
     -- Automatically clear expired password reset requests (24h window)
     UPDATE users
@@ -2062,7 +2086,7 @@ BEGIN
 
     RETURN NULL;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Attach purge trigger to high-frequency tables
 DROP TRIGGER IF EXISTS tr_purge_broadcasts ON broadcasts;
