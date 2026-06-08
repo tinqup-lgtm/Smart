@@ -2055,17 +2055,28 @@ BEGIN
     v_user_email := get_auth_email_raw();
 
     IF v_user_email IS NOT NULL THEN
-        SELECT COALESCE(jsonb_agg(id), '[]'::jsonb) INTO v_alerted_ids
-        FROM users, jsonb_array_elements_text(metadata->'alerted_ids') id
-        WHERE email = v_user_email AND id::uuid IN (SELECT id FROM notifications UNION SELECT id FROM broadcasts);
+        v_alerted_ids := (
+            SELECT COALESCE(jsonb_agg(id), '[]'::jsonb)
+            FROM users, jsonb_array_elements_text(metadata->'alerted_ids') id
+            WHERE email = v_user_email AND id::uuid IN (SELECT id FROM notifications UNION SELECT id FROM broadcasts)
+        );
 
-        SELECT COALESCE(jsonb_agg(id), '[]'::jsonb) INTO v_cleared_broadcasts
-        FROM users, jsonb_array_elements_text(metadata->'cleared_broadcasts') id
-        WHERE email = v_user_email AND id::uuid IN (SELECT id FROM broadcasts);
+        v_cleared_broadcasts := (
+            SELECT COALESCE(jsonb_agg(id), '[]'::jsonb)
+            FROM users, jsonb_array_elements_text(metadata->'cleared_broadcasts') id
+            WHERE email = v_user_email AND id::uuid IN (SELECT id FROM broadcasts)
+        );
 
-        SELECT COALESCE(jsonb_agg(id), '[]'::jsonb) INTO v_read_broadcasts
-        FROM users, jsonb_array_elements_text(metadata->'read_broadcasts') id
-        WHERE email = v_user_email AND id::uuid IN (SELECT id FROM broadcasts);
+        v_read_broadcasts := (
+            SELECT COALESCE(jsonb_agg(id), '[]'::jsonb)
+            FROM users, jsonb_array_elements_text(metadata->'read_broadcasts') id
+            WHERE email = v_user_email AND id::uuid IN (SELECT id FROM broadcasts)
+        );
+
+        -- Final safety: ensure we never nullify metadata via builder if queries return no rows (though subqueries with COALESCE handle this)
+        v_alerted_ids := COALESCE(v_alerted_ids, '[]'::jsonb);
+        v_cleared_broadcasts := COALESCE(v_cleared_broadcasts, '[]'::jsonb);
+        v_read_broadcasts := COALESCE(v_read_broadcasts, '[]'::jsonb);
 
         UPDATE users
         SET metadata = metadata || jsonb_build_object(
