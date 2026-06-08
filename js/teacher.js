@@ -52,6 +52,7 @@ async function renderDashboard() {
     `;
   } catch (error) {
     console.error('Dashboard error:', error);
+    UI.showNotification('Error loading dashboard: ' + error.message, 'error');
     content.innerHTML = `<div class="stat-card danger">
       <h3>Error Loading Dashboard</h3>
       <div class="small danger-text">${escapeHtml(error.message)}</div>
@@ -94,6 +95,7 @@ async function renderCourses() {
     `;
   } catch (error) {
     console.error('Courses error:', error);
+    UI.showNotification('Error loading courses: ' + error.message, 'error');
     content.innerHTML = `<div class="card danger-border">
       <h3>Error Loading Courses</h3>
       <div class="small danger-text">${escapeHtml(error.message)}</div>
@@ -103,8 +105,10 @@ async function renderCourses() {
 }
 
 async function loadAndEditCourse(id) {
+    const renderId = window.currentRenderId;
     try {
         const course = await SupabaseDB.getCourse(id);
+        if (renderId !== window.currentRenderId) return;
         if (course) showCourseForm(course);
     } catch (e) {
         UI.showNotification('Error loading course: ' + e.message, 'error');
@@ -539,6 +543,7 @@ async function renderAssignments() {
 
   } catch (error) {
     console.error('Assignments error:', error);
+    UI.showNotification('Error loading assignments: ' + error.message, 'error');
     content.innerHTML = `<div class="stat-card danger">
       <h3>Error Loading Assignments</h3>
       <div class="small danger-text">${escapeHtml(error.message)}</div>
@@ -587,6 +592,7 @@ async function renderGrading() {
     }, { emptyMessage: '<h3>All caught up!</h3><p class="small">No pending submissions to grade.</p>' });
   } catch (error) {
     console.error('Grading error:', error);
+    UI.showNotification('Error loading grading queue: ' + error.message, 'error');
     content.innerHTML = `<div class="card danger-border">
       <h3>Error Loading Queue</h3>
       <div class="small danger-text">${escapeHtml(error.message)}</div>
@@ -689,12 +695,16 @@ async function unenrollStudent(courseId, studentEmail) {
 }
 
 async function showCertForm(studentEmail) {
-  const user = await SessionManager.getCurrentUser();
-  const { data: courses } = await SupabaseDB.getCourses(user.email, null);
-  const area = document.getElementById('certFormArea');
-  if (!area) return;
-  area.classList.remove('hidden');
-  area.innerHTML = `
+  const renderId = window.currentRenderId;
+  try {
+    const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
+    const { data: courses } = await SupabaseDB.getCourses(user.email, null);
+    if (renderId !== window.currentRenderId) return;
+    const area = document.getElementById('certFormArea');
+    if (!area) return;
+    area.classList.remove('hidden');
+    area.innerHTML = `
     <div class="card">
       <h3 class="m-0">Issue Certificate to ${escapeHtml(studentEmail)}</h3>
       <label class="mt-15">Select Course</label>
@@ -706,6 +716,10 @@ async function showCertForm(studentEmail) {
       </div>
     </div>
   `;
+  } catch (error) {
+    console.error('Show cert form error:', error);
+    UI.showNotification('Error opening certificate form: ' + error.message, 'error');
+  }
 }
 
 async function issueCert(studentEmail) {
@@ -724,7 +738,7 @@ async function issueCert(studentEmail) {
 
     // Upload to Supabase Storage
     const pdfBlob = doc.output('blob');
-    const path = `certificates/${studentEmail}/${courseId}_${Date.now()}.pdf`;
+    const path = `certificates/${studentEmail}/${courseId}_${TimerManager.getTime()}.pdf`;
     await SupabaseDB.uploadFile('certificates', path, pdfBlob);
     const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
 
@@ -759,7 +773,7 @@ function addQuestionField(q = null) {
   if (!container) return;
   const div = document.createElement('div');
   div.className = 'question mb-20 card';
-    const qId = 'q-text-' + Date.now() + Math.random().toString(36).substring(2, 9);
+    const qId = 'q-text-' + TimerManager.getTime() + Math.random().toString(36).substring(2, 9);
   div.innerHTML = `
     <div class="flex-between mb-15">
       <h4 class="m-0">Assignment Question</h4>
@@ -790,13 +804,16 @@ function addQuestionField(q = null) {
 }
 
 async function showAssignmentForm(assignment = null, courseId = null) {
+  const renderId = window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
   const isEdit = !!assignment;
   const finalCourseId = isEdit ? assignment.course_id : courseId;
 
   const user = await SessionManager.getCurrentUser();
+  if (renderId !== window.currentRenderId) return;
   const { data: courses } = await SupabaseDB.getCourses(user.email, null);
+  if (renderId !== window.currentRenderId) return;
 
   content.innerHTML = `
     <div class="card">
@@ -1003,7 +1020,15 @@ async function showAssignmentForm(assignment = null, courseId = null) {
     }
   });
 }
-async function editAssignment(id) { const user = await SessionManager.getCurrentUser(); const { data: assignments } = await SupabaseDB.getAssignments(user.email, null, null); const assignment = assignments.find(a => a.id === id); if (assignment) showAssignmentForm(assignment); }
+async function editAssignment(id) {
+  const renderId = window.currentRenderId;
+  const user = await SessionManager.getCurrentUser();
+  if (renderId !== window.currentRenderId) return;
+  const { data: assignments } = await SupabaseDB.getAssignments(user.email, null, null);
+  if (renderId !== window.currentRenderId) return;
+  const assignment = assignments.find(a => a.id === id);
+  if (assignment) showAssignmentForm(assignment);
+}
 async function deleteAssignmentById(id, courseId = null) {
   if (await UI.confirm('Are you sure you want to delete this assignment?', 'Delete Assignment')) {
     try {
@@ -1016,6 +1041,7 @@ async function deleteAssignmentById(id, courseId = null) {
   }
 }
 async function gradeSubmission(assignmentId, studentEmail) {
+  const renderId = window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
 
@@ -1024,6 +1050,7 @@ async function gradeSubmission(assignmentId, studentEmail) {
         SupabaseDB.getAssignment(assignmentId),
         SupabaseDB.getSubmission(assignmentId, studentEmail)
     ]);
+    if (renderId !== window.currentRenderId) return;
 
     if (!submission) throw new Error('Submission not found.');
 
@@ -1212,6 +1239,7 @@ async function renderDiscussions() {
     `;
   } catch (error) {
     console.error('Discussions error:', error);
+    UI.showNotification('Error loading discussions: ' + error.message, 'error');
     container.innerHTML = `<div class="stat-card danger">
       <h3>Error Loading Discussions</h3>
       <div class="small danger-text">${escapeHtml(error.message)}</div>
@@ -1221,9 +1249,12 @@ async function renderDiscussions() {
 }
 
 async function viewCourseDiscussions(courseId) {
+  const renderId = window.currentRenderId;
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const { data: disc } = await SupabaseDB.getDiscussions(courseId);
+    if (renderId !== window.currentRenderId) return;
     const container = document.getElementById('pageContent');
     if (!container) return;
 
@@ -1321,11 +1352,17 @@ async function renderAntiCheat() {
     `;
   } catch (error) {
     console.error('AntiCheat error:', error);
-    content.innerHTML = `<div class="card danger-border"><h3>Error Loading Summary</h3></div>`;
+    UI.showNotification('Error loading security summary: ' + error.message, 'error');
+    content.innerHTML = `<div class="card danger-border">
+      <h3>Error Loading Summary</h3>
+      <div class="small danger-text">${escapeHtml(error.message)}</div>
+      <button class="button w-auto mt-10" onclick="renderAntiCheat()">Retry</button>
+    </div>`;
   }
 }
 
 async function viewAssessmentViolations(assessmentId, title) {
+    const renderId = window.currentRenderId;
     const area = document.getElementById('violationDetailArea');
     if (!area) return;
     area.innerHTML = `<div class="loading-spinner"></div>`;
@@ -1333,6 +1370,7 @@ async function viewAssessmentViolations(assessmentId, title) {
 
     try {
         const { data: violations } = await SupabaseDB.getViolations(assessmentId, null, null);
+        if (renderId !== window.currentRenderId) return;
 
         // Group by student
         const studentMap = {};
@@ -1400,11 +1438,18 @@ async function viewAssessmentViolations(assessmentId, title) {
         `;
 
     } catch (e) {
-        area.innerHTML = `<div class="card danger-border">Error loading details: ${e.message}</div>`;
+        console.error('Violation detail error:', e);
+        UI.showNotification('Error loading violation details: ' + e.message, 'error');
+        area.innerHTML = `<div class="card danger-border">
+            <h3>Error Loading Details</h3>
+            <div class="small danger-text">${escapeHtml(e.message)}</div>
+            <button class="button w-auto mt-10" onclick="viewAssessmentViolations('${escapeAttr(assessmentId)}', '${escapeAttr(title)}')">Retry</button>
+        </div>`;
     }
 }
 
 async function viewStudentIntegrityReport(assessmentId, studentEmail) {
+    const renderId = window.currentRenderId;
     const backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop';
     backdrop.style.display = 'flex';
@@ -1421,9 +1466,12 @@ async function viewStudentIntegrityReport(assessmentId, studentEmail) {
 
     try {
         const { data: violations } = await SupabaseDB.getViolations(assessmentId, studentEmail, null);
+        if (renderId !== window.currentRenderId) return;
         UI.renderIntegrityReport('reportContentArea', violations, studentEmail);
     } catch (e) {
-        document.getElementById('reportContentArea').innerHTML = `<div class="empty danger-text">Failed to load report: ${e.message}</div>`;
+        console.error('Integrity report error:', e);
+        UI.showNotification('Error loading integrity report: ' + e.message, 'error');
+        document.getElementById('reportContentArea').innerHTML = `<div class="empty danger-text">Failed to load report: ${escapeHtml(e.message)}</div>`;
     }
 }
 
@@ -1600,7 +1648,7 @@ async function renderLiveClasses() {
           const isLive = liveClass.status === 'live';
           const startAt = new Date(liveClass.start_at).getTime();
           const endAt = new Date(liveClass.end_at).getTime();
-          const now = Date.now();
+          const now = TimerManager.getTime();
           const isUpcoming = startAt > now;
 
           return `
@@ -1646,13 +1694,20 @@ async function renderLiveClasses() {
 
   } catch (error) {
     console.error('Live Classes error:', error);
-    content.innerHTML = `<div class="card"><h3>Error Loading Live Classes</h3></div>`;
+    UI.showNotification('Error loading live classes: ' + error.message, 'error');
+    content.innerHTML = `<div class="card danger-border">
+      <h3>Error Loading Live Classes</h3>
+      <div class="small danger-text">${escapeHtml(error.message)}</div>
+      <button class="button w-auto mt-10" onclick="renderLiveClasses()">Retry</button>
+    </div>`;
   }
 }
 
 async function loadAndEditLiveClass(id) {
+  const renderId = window.currentRenderId;
   try {
     const liveClass = await SupabaseDB.getLiveClass(id);
+    if (renderId !== window.currentRenderId) return;
     if (liveClass) showLiveClassForm(liveClass);
   } catch (e) {
     UI.showNotification('Error loading live class: ' + e.message, 'error');
@@ -1660,6 +1715,7 @@ async function loadAndEditLiveClass(id) {
 }
 
 async function showLiveClassForm(liveClass = null) {
+  const renderId = window.currentRenderId;
   const isEdit = !!liveClass;
   const area = document.getElementById('liveFormArea');
   if (!area) return;
@@ -1668,10 +1724,12 @@ async function showLiveClassForm(liveClass = null) {
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const [{ data: courses }, liveRes] = await Promise.all([
         SupabaseDB.getCourses(user.email, null),
         SupabaseDB.getLiveClasses(null, user.email, null)
     ]);
+    if (renderId !== window.currentRenderId) return;
     const allLiveClasses = liveRes.data || [];
 
     area.innerHTML = `
@@ -2053,8 +2111,10 @@ async function deleteLiveClass(id) {
 }
 
 async function viewAttendance(classId) {
+  const renderId = window.currentRenderId;
   try {
     const { data: att } = await SupabaseDB.getAttendance(classId, null);
+    if (renderId !== window.currentRenderId) return;
 
     const content = `
       <div class="modal-backdrop" onclick="this.remove()">
@@ -2153,6 +2213,7 @@ async function renderQuizzes() {
 
   } catch (error) {
     console.error('Quizzes error:', error);
+    UI.showNotification('Error loading quizzes: ' + error.message, 'error');
     container.innerHTML = `<div class="stat-card danger">
       <h3>Error Loading Quizzes</h3>
       <div class="small danger-text">${escapeHtml(error.message)}</div>
@@ -2162,12 +2223,15 @@ async function renderQuizzes() {
 }
 
 async function showQuizForm(quiz = null) {
+  const renderId = window.currentRenderId;
   const isEdit = !!quiz;
   const container = document.getElementById('pageContent');
   if (!container) return;
 
   const user = await SessionManager.getCurrentUser();
+  if (renderId !== window.currentRenderId) return;
   const { data: courses } = await SupabaseDB.getCourses(user.email, null);
+  if (renderId !== window.currentRenderId) return;
 
   container.innerHTML = `
     <div class="card">
@@ -2235,7 +2299,7 @@ async function showQuizForm(quiz = null) {
     if (!container) return;
     const div = document.createElement('div');
     div.className = 'question mb-20 card';
-    const qId = 'quiz-q-text-' + Date.now() + Math.random().toString(36).substring(2, 9);
+    const qId = 'quiz-q-text-' + TimerManager.getTime() + Math.random().toString(36).substring(2, 9);
     div.innerHTML = `
       <div class="flex-between mb-15">
         <h4 class="m-0">Quiz Question</h4>
@@ -2286,7 +2350,7 @@ async function showQuizForm(quiz = null) {
   const renderQuizOptions = (q) => {
     if (q?.type === 'tf') return `<select class="q-correct"><option value="True" ${q.correct === 'True' ? 'selected' : ''}>True</option><option value="False" ${q.correct === 'False' ? 'selected' : ''}>False</option></select>`;
     if (q?.type === 'short') return `<input type="text" class="q-correct" placeholder="Correct Answer (Exact Match)" value="${q.correct || ''}">`;
-    const id = Date.now() + Math.random();
+    const id = TimerManager.getTime() + Math.random();
     return `<div class="mcq-options">${(q?.options || ['','','','']).map((opt, i) => `<div>Option ${i+1}: <input type="text" class="opt-val" value="${escapeHtml(opt)}"> <input type="radio" name="correct-${id}" ${q?.correct === i.toString() ? 'checked' : ''} value="${i}"> Correct</div>`).join('')}</div>`;
   };
   const toggleQuizOptions = (select) => {
@@ -2401,8 +2465,11 @@ async function showQuizForm(quiz = null) {
 }
 
 async function editQuiz(id) {
+  const renderId = window.currentRenderId;
   const user = await SessionManager.getCurrentUser();
+  if (renderId !== window.currentRenderId) return;
   const { data: quizzes } = await SupabaseDB.getQuizzes(null, user.email, null);
+  if (renderId !== window.currentRenderId) return;
   const quiz = (quizzes || []).find(q => q.id === id);
   showQuizForm(quiz);
 }
@@ -2420,14 +2487,17 @@ async function deleteQuizById(id) {
 }
 
 async function viewQuizResults(quizId) {
+  const renderId = window.currentRenderId;
   // Authoritative reconciliation before viewing results
   try { await SupabaseDB.reconcileQuizAttempts(quizId); } catch(e) { console.warn('Reconciliation failed:', e); }
+  if (renderId !== window.currentRenderId) return;
 
   try {
     const [{ data: subs }, quiz] = await Promise.all([
       SupabaseDB.getQuizSubmissions(quizId),
       SupabaseDB.getQuiz(quizId)
     ]);
+    if (renderId !== window.currentRenderId) return;
     const container = document.getElementById('pageContent');
     if (!container) return;
 
@@ -2459,11 +2529,13 @@ async function viewQuizResults(quizId) {
 }
 
 async function gradeQuizSubmission(submissionId, quizId) {
+  const renderId = window.currentRenderId;
   try {
     const [quiz, submission] = await Promise.all([
       SupabaseDB.getQuiz(quizId),
       SupabaseDB.getQuizSubmissionById(submissionId)
     ]);
+    if (renderId !== window.currentRenderId) return;
     const container = document.getElementById('pageContent');
   if (!container) return;
 
@@ -2686,7 +2758,12 @@ async function renderGradeBook() {
         filterGradeBook();
     } catch (error) {
         console.error('Grade Book error:', error);
-        content.innerHTML = `<div class="card danger-border"><h3>Error Loading Grade Book</h3><p class="small">${escapeHtml(error.message)}</p></div>`;
+        UI.showNotification('Error loading grade book: ' + error.message, 'error');
+        content.innerHTML = `<div class="card danger-border">
+            <h3>Error Loading Grade Book</h3>
+            <div class="small danger-text">${escapeHtml(error.message)}</div>
+            <button class="button w-auto mt-10" onclick="renderGradeBook()">Retry</button>
+        </div>`;
     }
 }
 
@@ -2842,12 +2919,16 @@ async function renderMaterials() {
 }
 
 async function showMaterialForm() {
-  const user = await SessionManager.getCurrentUser();
-  const { data: courses } = await SupabaseDB.getCourses(user.email, null);
-  const area = document.getElementById('materialFormArea');
-  if (!area) return;
-  area.classList.remove('hidden');
-  area.innerHTML = `
+  const renderId = window.currentRenderId;
+  try {
+    const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
+    const { data: courses } = await SupabaseDB.getCourses(user.email, null);
+    if (renderId !== window.currentRenderId) return;
+    const area = document.getElementById('materialFormArea');
+    if (!area) return;
+    area.classList.remove('hidden');
+    area.innerHTML = `
     <div class="card">
       <h3 class="m-0">Add Course Material</h3>
       <div class="mt-20">
@@ -2868,14 +2949,18 @@ async function showMaterialForm() {
   `;
 
   UI.createRTE('matDesc');
-  UI.createFileUploader('materialUploaderContainer', {
-    bucket: 'materials',
-    pathPrefix: 'course-content',
-    onUploadSuccess: (url) => {
-      document.getElementById('matFileUrl').value = url;
-      document.getElementById('saveMatBtn').disabled = false;
-    }
-  });
+    UI.createFileUploader('materialUploaderContainer', {
+      bucket: 'materials',
+      pathPrefix: 'course-content',
+      onUploadSuccess: (url) => {
+        document.getElementById('matFileUrl').value = url;
+        document.getElementById('saveMatBtn').disabled = false;
+      }
+    });
+  } catch (error) {
+    console.error('Show material form error:', error);
+    UI.showNotification('Error opening material form: ' + error.message, 'error');
+  }
 }
 
 async function saveMaterial() {

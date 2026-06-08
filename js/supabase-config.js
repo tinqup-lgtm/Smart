@@ -661,76 +661,49 @@ class SupabaseDB {
 
     static async deleteEnrollment(courseId, studentEmail) {
         // Thorough cleanup: Delete all related student history for this course
+        // Using Exhaustive bypass of pagination for all related record identification
         try {
-            // Get ALL assignment and quiz IDs for this course (bypass pagination hardening)
-            const [{ data: assignments }, { data: quizzes }] = await Promise.all([
-                supabaseClient.from('assignments').select('id').eq('course_id', courseId).range(0, 9999),
-                supabaseClient.from('quizzes').select('id').eq('course_id', courseId).range(0, 9999)
+            const [assignments, quizzes, liveClasses, certificates] = await Promise.all([
+                this._getAll(supabaseClient.from('assignments').select('id').eq('course_id', courseId)),
+                this._getAll(supabaseClient.from('quizzes').select('id').eq('course_id', courseId)),
+                this._getAll(supabaseClient.from('live_classes').select('id').eq('course_id', courseId)),
+                this._getAll(supabaseClient.from('certificates').select('certificate_url').match({ course_id: courseId, student_email: studentEmail }))
             ]);
 
-            const assignIds = (assignments || []).map(a => a.id);
-            const quizIds = (quizzes || []).map(q => q.id);
+            const assignIds = assignments.map(a => a.id);
+            const quizIds = quizzes.map(q => q.id);
+            const classIds = liveClasses.map(lc => lc.id);
 
-            // Delete submissions (with storage cleanup)
-            if (assignIds.length > 0) {
-                for (const aid of assignIds) {
-                    await this.deleteSubmission(aid, studentEmail);
-                }
+            // 1. Delete Submissions (including storage cleanup for files)
+            for (const aid of assignIds) {
+                await this.deleteSubmission(aid, studentEmail);
             }
 
-            // Delete quiz submissions
+            // 2. Delete Quiz Submissions
             if (quizIds.length > 0) {
-                await supabaseClient
-                    .from('quiz_submissions')
-                    .delete()
-                    .eq('student_email', studentEmail)
-                    .in('quiz_id', quizIds);
+                await supabaseClient.from('quiz_submissions').delete().eq('student_email', studentEmail).in('quiz_id', quizIds);
             }
 
-            // Delete study sessions
-            await supabaseClient
-                .from('study_sessions')
-                .delete()
-                .match({ course_id: courseId, user_email: studentEmail });
-
-            // Delete attendance (bypass pagination hardening)
-            const { data: liveClassesRes } = await supabaseClient.from('live_classes').select('id').eq('course_id', courseId).range(0, 9999);
-            const classIds = (liveClassesRes || []).map(lc => lc.id);
+            // 3. Delete Attendance records
             if (classIds.length > 0) {
-                await supabaseClient
-                    .from('attendance')
-                    .delete()
-                    .eq('student_email', studentEmail)
-                    .in('live_class_id', classIds);
+                await supabaseClient.from('attendance').delete().eq('student_email', studentEmail).in('live_class_id', classIds);
             }
 
-            // Delete discussions
-            await supabaseClient
-                .from('discussions')
-                .delete()
-                .match({ course_id: courseId, user_email: studentEmail });
+            // 4. Delete Study Sessions
+            await supabaseClient.from('study_sessions').delete().match({ course_id: courseId, user_email: studentEmail });
 
-            // Delete violations
-            await supabaseClient
-                .from('violations')
-                .delete()
-                .match({ course_id: courseId, user_email: studentEmail });
+            // 5. Delete Discussions
+            await supabaseClient.from('discussions').delete().match({ course_id: courseId, user_email: studentEmail });
 
-            // Delete certificates (and their files)
-            const { data: certs } = await supabaseClient
-                .from('certificates')
-                .select('certificate_url')
-                .match({ course_id: courseId, student_email: studentEmail });
+            // 6. Delete Violations (Anti-cheat events)
+            await supabaseClient.from('violations').delete().match({ course_id: courseId, user_email: studentEmail });
 
-            if (certs && certs.length > 0) {
-                for (const cert of certs) {
-                    if (cert.certificate_url) await this.deleteFileByUrl(cert.certificate_url);
-                }
-                await supabaseClient
-                    .from('certificates')
-                    .delete()
-                    .match({ course_id: courseId, student_email: studentEmail });
+            // 7. Delete Certificates and associated PDF files
+            for (const cert of certificates) {
+                if (cert.certificate_url) await this.deleteFileByUrl(cert.certificate_url);
             }
+            await supabaseClient.from('certificates').delete().match({ course_id: courseId, student_email: studentEmail });
+
         } catch (e) {
             console.warn('History cleanup during unenrollment partially failed:', e);
         }
@@ -1356,6 +1329,35 @@ class SupabaseDB {
             .eq('id', id);
         if (error) throw error;
         _cache.invalidate('planner');
+    }
+
+    /**
+     * Internal helper to fetch ALL records for a query by automatically handling pagination.
+     * Bypasses the default 1000-record limit.
+     */
+    static async _getAll(query) {
+        return this._request(async () => {
+            let allData = [];
+            let page = 0;
+            const pageSize = 1000;
+            let hasMore = true;
+
+            while (hasMore) {
+                const from = page * pageSize;
+                const to = from + pageSize - 1;
+                const { data, error } = await query.range(from, to);
+
+                if (error) throw error;
+                if (data && data.length > 0) {
+                    allData = allData.concat(data);
+                    hasMore = data.length === pageSize;
+                    page++;
+                } else {
+                    hasMore = false;
+                }
+            }
+            return allData;
+        });
     }
 
     // Backup helper with robust pagination support and dynamic ordering
