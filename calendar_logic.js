@@ -201,9 +201,19 @@ async function renderCalendar() {
 
     content.innerHTML = `<div class="flex-center p-40"><div class="bar" style="width:100px; height:4px; background:var(--purple); animation: pulse 1.5s infinite"></div></div>`;
 
-    await calendarMgr.init();
-    if (renderId !== window.currentRenderId) return;
-    renderCalendarUI();
+    try {
+        await calendarMgr.init();
+        if (renderId !== window.currentRenderId) return;
+        renderCalendarUI();
+    } catch (error) {
+        console.error('Calendar error:', error);
+        UI.showNotification('Error loading calendar: ' + error.message, 'error');
+        content.innerHTML = `<div class="stat-card danger">
+            <h3>Error Loading Calendar</h3>
+            <div class="small danger-text">${escapeHtml(error.message)}</div>
+            <button class="button w-auto mt-10" onclick="renderCalendar()">Retry</button>
+        </div>`;
+    }
 }
 
 function renderCalendarUI() {

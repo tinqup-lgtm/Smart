@@ -1,11 +1,15 @@
-let activeCountdowns = [];
-let currentGradeBookData = null;
-let _warnedEnd = false;
-
+const TeacherState = {
+  activeCountdowns: [],
+  currentGradeBookData: null,
+  gradeBookRawData: null,
+  currentStudents: [],
+  _warnedEnd: false,
+  liveClassTimer: null
+};
 
 function clearActiveCountdowns() {
-    UI.clearCountdowns(activeCountdowns, liveClassTimer);
-    liveClassTimer = null;
+    UI.clearCountdowns(TeacherState.activeCountdowns, TeacherState.liveClassTimer);
+    TeacherState.liveClassTimer = null;
 }
 
 function debounce(func, wait) {
@@ -33,6 +37,7 @@ async function renderDashboard() {
       SupabaseDB.getCount('submissions', q => q.eq('assignments.teacher_email', user.email).or('status.eq.submitted,regrade_request.not.is.null'), '*, assignments!inner(*)'),
       SupabaseDB.getViolations(null, null, user.email)
     ]);
+    if (renderId !== window.currentRenderId) return;
     const violationsCount = violationsRes.total || 0;
 
     content.innerHTML = `
@@ -47,6 +52,7 @@ async function renderDashboard() {
     `;
   } catch (error) {
     console.error('Dashboard error:', error);
+    UI.showNotification('Error loading dashboard: ' + error.message, 'error');
     content.innerHTML = `<div class="stat-card danger">
       <h3>Error Loading Dashboard</h3>
       <div class="small danger-text">${escapeHtml(error.message)}</div>
@@ -89,6 +95,7 @@ async function renderCourses() {
     `;
   } catch (error) {
     console.error('Courses error:', error);
+    UI.showNotification('Error loading courses: ' + error.message, 'error');
     content.innerHTML = `<div class="card danger-border">
       <h3>Error Loading Courses</h3>
       <div class="small danger-text">${escapeHtml(error.message)}</div>
@@ -98,8 +105,10 @@ async function renderCourses() {
 }
 
 async function loadAndEditCourse(id) {
+    const renderId = window.currentRenderId;
     try {
         const course = await SupabaseDB.getCourse(id);
+        if (renderId !== window.currentRenderId) return;
         if (course) showCourseForm(course);
     } catch (e) {
         UI.showNotification('Error loading course: ' + e.message, 'error');
@@ -530,10 +539,11 @@ async function renderAssignments() {
         compact: true,
         label: 'Expires in:',
         onEnd: () => renderAssignments()
-    }).forEach(c => activeCountdowns.push(c));
+    }).forEach(c => TeacherState.activeCountdowns.push(c));
 
   } catch (error) {
     console.error('Assignments error:', error);
+    UI.showNotification('Error loading assignments: ' + error.message, 'error');
     content.innerHTML = `<div class="stat-card danger">
       <h3>Error Loading Assignments</h3>
       <div class="small danger-text">${escapeHtml(error.message)}</div>
@@ -562,7 +572,7 @@ async function renderGrading() {
     content.innerHTML = `
       <div class="flex-between mb-20">
         <h2 class="m-0">Grading Queue</h2>
-        <div class="small text-muted">${total} Submissions Pending</div>
+        <div class="small text-muted">${escapeHtml(total)} Submissions Pending</div>
       </div>
       <div id="gradingQueueTable"></div>
     `;
@@ -582,6 +592,7 @@ async function renderGrading() {
     }, { emptyMessage: '<h3>All caught up!</h3><p class="small">No pending submissions to grade.</p>' });
   } catch (error) {
     console.error('Grading error:', error);
+    UI.showNotification('Error loading grading queue: ' + error.message, 'error');
     content.innerHTML = `<div class="card danger-border">
       <h3>Error Loading Queue</h3>
       <div class="small danger-text">${escapeHtml(error.message)}</div>
@@ -660,17 +671,7 @@ async function renderStudents() {
         searchInput.setSelectionRange(searchTerm.length, searchTerm.length);
     }
 
-    const exportStudents = async (type) => {
-        const headers = ['Name', 'Email', 'Course'];
-        const rows = students.map(s => [s.full_name || 'N/A', s.email, s.course_title || 'Unknown']);
-
-        if (type === 'csv') {
-            Exporter.csv('students_list.csv', headers, rows);
-        } else {
-            await Exporter.pdf('students_list.pdf', 'Enrolled Students List', headers, rows);
-        }
-    };
-    window.exportStudents = exportStudents;
+    TeacherState.currentStudents = students;
 
   } catch (error) {
     console.error('Students error:', error);
@@ -694,12 +695,16 @@ async function unenrollStudent(courseId, studentEmail) {
 }
 
 async function showCertForm(studentEmail) {
-  const user = await SessionManager.getCurrentUser();
-  const { data: courses } = await SupabaseDB.getCourses(user.email, null);
-  const area = document.getElementById('certFormArea');
-  if (!area) return;
-  area.classList.remove('hidden');
-  area.innerHTML = `
+  const renderId = window.currentRenderId;
+  try {
+    const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
+    const { data: courses } = await SupabaseDB.getCourses(user.email, null);
+    if (renderId !== window.currentRenderId) return;
+    const area = document.getElementById('certFormArea');
+    if (!area) return;
+    area.classList.remove('hidden');
+    area.innerHTML = `
     <div class="card">
       <h3 class="m-0">Issue Certificate to ${escapeHtml(studentEmail)}</h3>
       <label class="mt-15">Select Course</label>
@@ -711,6 +716,10 @@ async function showCertForm(studentEmail) {
       </div>
     </div>
   `;
+  } catch (error) {
+    console.error('Show cert form error:', error);
+    UI.showNotification('Error opening certificate form: ' + error.message, 'error');
+  }
 }
 
 async function issueCert(studentEmail) {
@@ -729,7 +738,7 @@ async function issueCert(studentEmail) {
 
     // Upload to Supabase Storage
     const pdfBlob = doc.output('blob');
-    const path = `certificates/${studentEmail}/${courseId}_${Date.now()}.pdf`;
+    const path = `certificates/${studentEmail}/${courseId}_${TimerManager.getTime()}.pdf`;
     await SupabaseDB.uploadFile('certificates', path, pdfBlob);
     const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
 
@@ -764,7 +773,7 @@ function addQuestionField(q = null) {
   if (!container) return;
   const div = document.createElement('div');
   div.className = 'question mb-20 card';
-    const qId = 'q-text-' + Date.now() + Math.random().toString(36).substring(2, 9);
+    const qId = 'q-text-' + TimerManager.getTime() + Math.random().toString(36).substring(2, 9);
   div.innerHTML = `
     <div class="flex-between mb-15">
       <h4 class="m-0">Assignment Question</h4>
@@ -795,13 +804,16 @@ function addQuestionField(q = null) {
 }
 
 async function showAssignmentForm(assignment = null, courseId = null) {
+  const renderId = window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
   const isEdit = !!assignment;
   const finalCourseId = isEdit ? assignment.course_id : courseId;
 
   const user = await SessionManager.getCurrentUser();
+  if (renderId !== window.currentRenderId) return;
   const { data: courses } = await SupabaseDB.getCourses(user.email, null);
+  if (renderId !== window.currentRenderId) return;
 
   content.innerHTML = `
     <div class="card">
@@ -1008,7 +1020,15 @@ async function showAssignmentForm(assignment = null, courseId = null) {
     }
   });
 }
-async function editAssignment(id) { const user = await SessionManager.getCurrentUser(); const { data: assignments } = await SupabaseDB.getAssignments(user.email, null, null); const assignment = assignments.find(a => a.id === id); if (assignment) showAssignmentForm(assignment); }
+async function editAssignment(id) {
+  const renderId = window.currentRenderId;
+  const user = await SessionManager.getCurrentUser();
+  if (renderId !== window.currentRenderId) return;
+  const { data: assignments } = await SupabaseDB.getAssignments(user.email, null, null);
+  if (renderId !== window.currentRenderId) return;
+  const assignment = assignments.find(a => a.id === id);
+  if (assignment) showAssignmentForm(assignment);
+}
 async function deleteAssignmentById(id, courseId = null) {
   if (await UI.confirm('Are you sure you want to delete this assignment?', 'Delete Assignment')) {
     try {
@@ -1021,6 +1041,7 @@ async function deleteAssignmentById(id, courseId = null) {
   }
 }
 async function gradeSubmission(assignmentId, studentEmail) {
+  const renderId = window.currentRenderId;
   const content = document.getElementById('pageContent');
   if (!content) return;
 
@@ -1029,6 +1050,7 @@ async function gradeSubmission(assignmentId, studentEmail) {
         SupabaseDB.getAssignment(assignmentId),
         SupabaseDB.getSubmission(assignmentId, studentEmail)
     ]);
+    if (renderId !== window.currentRenderId) return;
 
     if (!submission) throw new Error('Submission not found.');
 
@@ -1217,6 +1239,7 @@ async function renderDiscussions() {
     `;
   } catch (error) {
     console.error('Discussions error:', error);
+    UI.showNotification('Error loading discussions: ' + error.message, 'error');
     container.innerHTML = `<div class="stat-card danger">
       <h3>Error Loading Discussions</h3>
       <div class="small danger-text">${escapeHtml(error.message)}</div>
@@ -1226,9 +1249,12 @@ async function renderDiscussions() {
 }
 
 async function viewCourseDiscussions(courseId) {
+  const renderId = window.currentRenderId;
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const { data: disc } = await SupabaseDB.getDiscussions(courseId);
+    if (renderId !== window.currentRenderId) return;
     const container = document.getElementById('pageContent');
     if (!container) return;
 
@@ -1257,15 +1283,21 @@ async function renderHelp() {
   clearActiveCountdowns();
   const content = document.getElementById('pageContent');
   if (!content) return;
-  if (renderId !== window.currentRenderId) return;
 
-  content.innerHTML = `
-    <div class="flex-between mb-20">
-        <h2 class="m-0">Help & Support</h2>
-    </div>
-    <div id="helpContainer"></div>
-  `;
-  HelpSystem.renderHelpCenter('helpContainer', 'teacher');
+  try {
+    if (renderId !== window.currentRenderId) return;
+
+    content.innerHTML = `
+      <div class="flex-between mb-20">
+          <h2 class="m-0">Help & Support</h2>
+      </div>
+      <div id="helpContainer"></div>
+    `;
+    HelpSystem.renderHelpCenter('helpContainer', 'teacher');
+  } catch (error) {
+    console.error('Help error:', error);
+    UI.showNotification('Error loading help center: ' + error.message, 'error');
+  }
 }
 
 async function renderAntiCheat() {
@@ -1320,11 +1352,17 @@ async function renderAntiCheat() {
     `;
   } catch (error) {
     console.error('AntiCheat error:', error);
-    content.innerHTML = `<div class="card danger-border"><h3>Error Loading Summary</h3></div>`;
+    UI.showNotification('Error loading security summary: ' + error.message, 'error');
+    content.innerHTML = `<div class="card danger-border">
+      <h3>Error Loading Summary</h3>
+      <div class="small danger-text">${escapeHtml(error.message)}</div>
+      <button class="button w-auto mt-10" onclick="renderAntiCheat()">Retry</button>
+    </div>`;
   }
 }
 
 async function viewAssessmentViolations(assessmentId, title) {
+    const renderId = window.currentRenderId;
     const area = document.getElementById('violationDetailArea');
     if (!area) return;
     area.innerHTML = `<div class="loading-spinner"></div>`;
@@ -1332,6 +1370,7 @@ async function viewAssessmentViolations(assessmentId, title) {
 
     try {
         const { data: violations } = await SupabaseDB.getViolations(assessmentId, null, null);
+        if (renderId !== window.currentRenderId) return;
 
         // Group by student
         const studentMap = {};
@@ -1399,11 +1438,18 @@ async function viewAssessmentViolations(assessmentId, title) {
         `;
 
     } catch (e) {
-        area.innerHTML = `<div class="card danger-border">Error loading details: ${e.message}</div>`;
+        console.error('Violation detail error:', e);
+        UI.showNotification('Error loading violation details: ' + e.message, 'error');
+        area.innerHTML = `<div class="card danger-border">
+            <h3>Error Loading Details</h3>
+            <div class="small danger-text">${escapeHtml(e.message)}</div>
+            <button class="button w-auto mt-10" onclick="viewAssessmentViolations('${escapeAttr(assessmentId)}', '${escapeAttr(title)}')">Retry</button>
+        </div>`;
     }
 }
 
 async function viewStudentIntegrityReport(assessmentId, studentEmail) {
+    const renderId = window.currentRenderId;
     const backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop';
     backdrop.style.display = 'flex';
@@ -1420,9 +1466,12 @@ async function viewStudentIntegrityReport(assessmentId, studentEmail) {
 
     try {
         const { data: violations } = await SupabaseDB.getViolations(assessmentId, studentEmail, null);
+        if (renderId !== window.currentRenderId) return;
         UI.renderIntegrityReport('reportContentArea', violations, studentEmail);
     } catch (e) {
-        document.getElementById('reportContentArea').innerHTML = `<div class="empty danger-text">Failed to load report: ${e.message}</div>`;
+        console.error('Integrity report error:', e);
+        UI.showNotification('Error loading integrity report: ' + e.message, 'error');
+        document.getElementById('reportContentArea').innerHTML = `<div class="empty danger-text">Failed to load report: ${escapeHtml(e.message)}</div>`;
     }
 }
 
@@ -1547,9 +1596,14 @@ function updateACPreview() {
 }
 
 async function renderSettings() {
-    const renderId = ++window.currentRenderId;
+  const renderId = ++window.currentRenderId;
+  try {
     if (renderId !== window.currentRenderId) return;
     SettingsManager.render('Enable real-time desktop notifications for student submissions and system alerts.');
+  } catch (error) {
+    console.error('Settings error:', error);
+    UI.showNotification('Error loading settings: ' + error.message, 'error');
+  }
 }
 
 async function renderLiveClasses() {
@@ -1594,7 +1648,7 @@ async function renderLiveClasses() {
           const isLive = liveClass.status === 'live';
           const startAt = new Date(liveClass.start_at).getTime();
           const endAt = new Date(liveClass.end_at).getTime();
-          const now = Date.now();
+          const now = TimerManager.getTime();
           const isUpcoming = startAt > now;
 
           return `
@@ -1636,17 +1690,24 @@ async function renderLiveClasses() {
     Countdown.createAll('.live-sch-countdown', {
         showProgress: true,
         onEnd: () => renderLiveClasses()
-    }).forEach(c => activeCountdowns.push(c));
+    }).forEach(c => TeacherState.activeCountdowns.push(c));
 
   } catch (error) {
     console.error('Live Classes error:', error);
-    content.innerHTML = `<div class="card"><h3>Error Loading Live Classes</h3></div>`;
+    UI.showNotification('Error loading live classes: ' + error.message, 'error');
+    content.innerHTML = `<div class="card danger-border">
+      <h3>Error Loading Live Classes</h3>
+      <div class="small danger-text">${escapeHtml(error.message)}</div>
+      <button class="button w-auto mt-10" onclick="renderLiveClasses()">Retry</button>
+    </div>`;
   }
 }
 
 async function loadAndEditLiveClass(id) {
+  const renderId = window.currentRenderId;
   try {
     const liveClass = await SupabaseDB.getLiveClass(id);
+    if (renderId !== window.currentRenderId) return;
     if (liveClass) showLiveClassForm(liveClass);
   } catch (e) {
     UI.showNotification('Error loading live class: ' + e.message, 'error');
@@ -1654,6 +1715,7 @@ async function loadAndEditLiveClass(id) {
 }
 
 async function showLiveClassForm(liveClass = null) {
+  const renderId = window.currentRenderId;
   const isEdit = !!liveClass;
   const area = document.getElementById('liveFormArea');
   if (!area) return;
@@ -1662,10 +1724,12 @@ async function showLiveClassForm(liveClass = null) {
 
   try {
     const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
     const [{ data: courses }, liveRes] = await Promise.all([
         SupabaseDB.getCourses(user.email, null),
         SupabaseDB.getLiveClasses(null, user.email, null)
     ]);
+    if (renderId !== window.currentRenderId) return;
     const allLiveClasses = liveRes.data || [];
 
     area.innerHTML = `
@@ -1786,15 +1850,14 @@ async function showLiveClassForm(liveClass = null) {
 }
 
 let jitsiAPI = null;
-let liveClassTimer = null;
 
 function startLiveClassTimer(id, endAt) {
-    _warnedEnd = false;
+    TeacherState._warnedEnd = false;
     const endTime = new Date(endAt).getTime();
 
-    liveClassTimer = Countdown.create(null, {
+    TeacherState.liveClassTimer = Countdown.create(null, {
         targetDate: endTime,
-        referenceDate: liveClassTimer?.referenceDate || TimerManager.getTime(),
+        referenceDate: TeacherState.liveClassTimer?.referenceDate || TimerManager.getTime(),
         headless: true,
         onEnd: async () => {
             if (await UI.confirm('Scheduled class time has reached. Do you want to extend by 15 minutes? Press Cancel to end class.', 'Class Time Reached')) {
@@ -1804,8 +1867,8 @@ function startLiveClassTimer(id, endAt) {
             }
         },
         onTick: (time) => {
-            if (time.total <= 5 * 60 * 1000 && !_warnedEnd && time.total > 0) {
-                _warnedEnd = true;
+            if (time.total <= 5 * 60 * 1000 && !TeacherState._warnedEnd && time.total > 0) {
+                TeacherState._warnedEnd = true;
                 UI.showNotification('Class ends in 5 minutes', 'warn');
             }
         }
@@ -1933,12 +1996,12 @@ async function startTeacherLiveClass(id, roomName) {
     container.classList.add('hidden');
     if (modControls) modControls.classList.add('hidden');
     if (stopBtn) stopBtn.classList.add('hidden');
-    if (liveClassTimer instanceof Countdown) {
-        liveClassTimer.destroy();
-        liveClassTimer = null;
-    } else if (liveClassTimer) {
-        clearInterval(liveClassTimer);
-        liveClassTimer = null;
+    if (TeacherState.liveClassTimer instanceof Countdown) {
+        TeacherState.liveClassTimer.destroy();
+        TeacherState.liveClassTimer = null;
+    } else if (TeacherState.liveClassTimer) {
+        clearInterval(TeacherState.liveClassTimer);
+        TeacherState.liveClassTimer = null;
     }
 
     // Only set status back to scheduled if the teacher didn't stop the class manually
@@ -1964,12 +2027,12 @@ async function startTeacherLiveClass(id, roomName) {
 
 async function stopLiveClass(id) {
     if (await UI.confirm('Are you sure you want to stop the class? This will disconnect all participants.', 'Stop Class')) {
-        if (liveClassTimer instanceof Countdown) {
-            liveClassTimer.destroy();
-            liveClassTimer = null;
-        } else if (liveClassTimer) {
-            clearInterval(liveClassTimer);
-            liveClassTimer = null;
+        if (TeacherState.liveClassTimer instanceof Countdown) {
+            TeacherState.liveClassTimer.destroy();
+            TeacherState.liveClassTimer = null;
+        } else if (TeacherState.liveClassTimer) {
+            clearInterval(TeacherState.liveClassTimer);
+            TeacherState.liveClassTimer = null;
         }
 
         try {
@@ -2048,8 +2111,10 @@ async function deleteLiveClass(id) {
 }
 
 async function viewAttendance(classId) {
+  const renderId = window.currentRenderId;
   try {
     const { data: att } = await SupabaseDB.getAttendance(classId, null);
+    if (renderId !== window.currentRenderId) return;
 
     const content = `
       <div class="modal-backdrop" onclick="this.remove()">
@@ -2144,10 +2209,11 @@ async function renderQuizzes() {
     Countdown.createAll('.quiz-sch-countdown', {
         showProgress: true,
         onEnd: () => renderQuizzes()
-    }).forEach(c => activeCountdowns.push(c));
+    }).forEach(c => TeacherState.activeCountdowns.push(c));
 
   } catch (error) {
     console.error('Quizzes error:', error);
+    UI.showNotification('Error loading quizzes: ' + error.message, 'error');
     container.innerHTML = `<div class="stat-card danger">
       <h3>Error Loading Quizzes</h3>
       <div class="small danger-text">${escapeHtml(error.message)}</div>
@@ -2157,12 +2223,15 @@ async function renderQuizzes() {
 }
 
 async function showQuizForm(quiz = null) {
+  const renderId = window.currentRenderId;
   const isEdit = !!quiz;
   const container = document.getElementById('pageContent');
   if (!container) return;
 
   const user = await SessionManager.getCurrentUser();
+  if (renderId !== window.currentRenderId) return;
   const { data: courses } = await SupabaseDB.getCourses(user.email, null);
+  if (renderId !== window.currentRenderId) return;
 
   container.innerHTML = `
     <div class="card">
@@ -2230,7 +2299,7 @@ async function showQuizForm(quiz = null) {
     if (!container) return;
     const div = document.createElement('div');
     div.className = 'question mb-20 card';
-    const qId = 'quiz-q-text-' + Date.now() + Math.random().toString(36).substring(2, 9);
+    const qId = 'quiz-q-text-' + TimerManager.getTime() + Math.random().toString(36).substring(2, 9);
     div.innerHTML = `
       <div class="flex-between mb-15">
         <h4 class="m-0">Quiz Question</h4>
@@ -2281,7 +2350,7 @@ async function showQuizForm(quiz = null) {
   const renderQuizOptions = (q) => {
     if (q?.type === 'tf') return `<select class="q-correct"><option value="True" ${q.correct === 'True' ? 'selected' : ''}>True</option><option value="False" ${q.correct === 'False' ? 'selected' : ''}>False</option></select>`;
     if (q?.type === 'short') return `<input type="text" class="q-correct" placeholder="Correct Answer (Exact Match)" value="${q.correct || ''}">`;
-    const id = Date.now() + Math.random();
+    const id = TimerManager.getTime() + Math.random();
     return `<div class="mcq-options">${(q?.options || ['','','','']).map((opt, i) => `<div>Option ${i+1}: <input type="text" class="opt-val" value="${escapeHtml(opt)}"> <input type="radio" name="correct-${id}" ${q?.correct === i.toString() ? 'checked' : ''} value="${i}"> Correct</div>`).join('')}</div>`;
   };
   const toggleQuizOptions = (select) => {
@@ -2396,8 +2465,11 @@ async function showQuizForm(quiz = null) {
 }
 
 async function editQuiz(id) {
+  const renderId = window.currentRenderId;
   const user = await SessionManager.getCurrentUser();
+  if (renderId !== window.currentRenderId) return;
   const { data: quizzes } = await SupabaseDB.getQuizzes(null, user.email, null);
+  if (renderId !== window.currentRenderId) return;
   const quiz = (quizzes || []).find(q => q.id === id);
   showQuizForm(quiz);
 }
@@ -2415,14 +2487,17 @@ async function deleteQuizById(id) {
 }
 
 async function viewQuizResults(quizId) {
+  const renderId = window.currentRenderId;
   // Authoritative reconciliation before viewing results
   try { await SupabaseDB.reconcileQuizAttempts(quizId); } catch(e) { console.warn('Reconciliation failed:', e); }
+  if (renderId !== window.currentRenderId) return;
 
   try {
     const [{ data: subs }, quiz] = await Promise.all([
       SupabaseDB.getQuizSubmissions(quizId),
       SupabaseDB.getQuiz(quizId)
     ]);
+    if (renderId !== window.currentRenderId) return;
     const container = document.getElementById('pageContent');
     if (!container) return;
 
@@ -2454,11 +2529,13 @@ async function viewQuizResults(quizId) {
 }
 
 async function gradeQuizSubmission(submissionId, quizId) {
+  const renderId = window.currentRenderId;
   try {
     const [quiz, submission] = await Promise.all([
       SupabaseDB.getQuiz(quizId),
       SupabaseDB.getQuizSubmissionById(submissionId)
     ]);
+    if (renderId !== window.currentRenderId) return;
     const container = document.getElementById('pageContent');
   if (!container) return;
 
@@ -2677,110 +2754,21 @@ async function renderGradeBook() {
             <div id="gradeBookArea" class="mt-20"></div>
         `;
 
-        const filterGradeBook = async () => {
-            const courseId = document.getElementById('gbCourseSelect').value;
-            const area = document.getElementById('gradeBookArea');
-
-            let filteredCourses = courseId ? courses.filter(c => c.id === courseId) : courses;
-            let courseIds = filteredCourses.map(c => c.id);
-
-            const { data: enrollments } = await SupabaseDB.getEnrollmentsByCourses(courseIds);
-
-            currentGradeBookData = { filteredCourses, enrollments, assignments, quizzes, submissions, quizSubs };
-
-            let html = '';
-
-            for (const course of filteredCourses) {
-                const courseAssigns = assignments.filter(a => a.course_id === course.id && a.status === 'published');
-                const courseQuizzes = quizzes.filter(q => q.course_id === course.id && q.status === 'published');
-                const courseStudents = enrollments.filter(e => e.course_id === course.id).map(e => e.student_email);
-
-                if (courseStudents.length === 0) {
-                    html += `<div class="card mb-20"><h3>${escapeHtml(course.title)}</h3><p class="empty small">No students enrolled.</p></div>`;
-                    continue;
-                }
-
-                html += `
-                    <div class="card mb-20" style="padding:0; overflow:hidden">
-                        <div class="p-15" style="background:var(--bg)">
-                            <h3 class="m-0">${escapeHtml(course.title)}</h3>
-                            <p class="tiny text-muted m-0">${courseStudents.length} Students | ${courseAssigns.length} Assignments | ${courseQuizzes.length} Quizzes</p>
-                        </div>
-                        <div style="overflow-x:auto">
-                            <table class="m-0">
-                                <thead>
-                                    <tr>
-                                        <th style="min-width:200px">Student</th>
-                                        ${courseAssigns.map(a => `<th class="text-center" style="min-width:120px" title="${escapeAttr(a.title)}">📝 ${escapeHtml(a.title.substring(0,10))}...</th>`).join('')}
-                                        ${courseQuizzes.map(q => `<th class="text-center" style="min-width:120px" title="${escapeAttr(q.title)}">❓ ${escapeHtml(q.title.substring(0,10))}...</th>`).join('')}
-                                        <th class="text-center" style="min-width:100px; background:#f8fafc">Final Avg</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${courseStudents.map(email => {
-                                        let earnedPoints = 0;
-                                        let itemsCount = 0;
-
-                                        const assignmentCells = courseAssigns.map(a => {
-                                            const sub = submissions.find(s => s.assignment_id === a.id && s.student_email === email);
-                                            if (sub && sub.status === 'graded') {
-                                                earnedPoints += sub.final_grade;
-                                                itemsCount++;
-                                                return `
-                                                    <td class="text-center">
-                                                        <span class="badge ${sub.final_grade >= 70 ? 'badge-active' : 'badge-warn'}">${sub.final_grade}%</span>
-                                                        <div class="tiny text-muted mt-5">${sub.grade} / ${a.points_possible}</div>
-                                                    </td>`;
-                                            }
-                                            return `<td class="text-center"><span class="tiny text-muted">-</span></td>`;
-                                        }).join('');
-
-                                        const quizCells = courseQuizzes.map(q => {
-                                            const sub = quizSubs.filter(s => s.quiz_id === q.id && s.student_email === email && s.status === 'submitted')
-                                                               .sort((a,b) => (b.score || 0) - (a.score || 0))[0];
-                                            if (sub) {
-                                                earnedPoints += sub.score;
-                                                itemsCount++;
-                                                const rawScore = Math.round((sub.score / 100) * sub.total_points);
-                                                return `
-                                                    <td class="text-center">
-                                                        <span class="badge ${sub.score >= 70 ? 'badge-active' : 'badge-warn'}">${sub.score}%</span>
-                                                        <div class="tiny text-muted mt-5">${rawScore} / ${sub.total_points}</div>
-                                                    </td>`;
-                                            }
-                                            return `<td class="text-center"><span class="tiny text-muted">-</span></td>`;
-                                        }).join('');
-
-                                        const avg = itemsCount > 0 ? Math.round(earnedPoints / itemsCount) : 0;
-
-                                        return `
-                                            <tr>
-                                                <td><div class="bold small">${escapeHtml(email)}</div></td>
-                                                ${assignmentCells}
-                                                ${quizCells}
-                                                <td class="text-center" style="background:#f8fafc"><strong class="${avg >= 70 ? 'success-text' : 'danger-text'}">${itemsCount > 0 ? avg + '%' : '-'}</strong></td>
-                                            </tr>
-                                        `;
-                                    }).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                `;
-            }
-            area.innerHTML = html || '<div class="empty">No data available.</div>';
-        };
-        window.filterGradeBook = filterGradeBook;
-
+        TeacherState.gradeBookRawData = { courses, assignments, quizzes, submissions, quizSubs };
         filterGradeBook();
     } catch (error) {
         console.error('Grade Book error:', error);
-        content.innerHTML = `<div class="card danger-border"><h3>Error Loading Grade Book</h3><p class="small">${escapeHtml(error.message)}</p></div>`;
+        UI.showNotification('Error loading grade book: ' + error.message, 'error');
+        content.innerHTML = `<div class="card danger-border">
+            <h3>Error Loading Grade Book</h3>
+            <div class="small danger-text">${escapeHtml(error.message)}</div>
+            <button class="button w-auto mt-10" onclick="renderGradeBook()">Retry</button>
+        </div>`;
     }
 }
 
 async function exportGradeBook(type) {
-    const data = currentGradeBookData;
+    const data = TeacherState.currentGradeBookData;
     if (!data) return UI.showNotification('No data to export', 'warn');
 
     const { filteredCourses, enrollments, assignments, quizzes, submissions, quizSubs } = data;
@@ -2931,12 +2919,16 @@ async function renderMaterials() {
 }
 
 async function showMaterialForm() {
-  const user = await SessionManager.getCurrentUser();
-  const { data: courses } = await SupabaseDB.getCourses(user.email, null);
-  const area = document.getElementById('materialFormArea');
-  if (!area) return;
-  area.classList.remove('hidden');
-  area.innerHTML = `
+  const renderId = window.currentRenderId;
+  try {
+    const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
+    const { data: courses } = await SupabaseDB.getCourses(user.email, null);
+    if (renderId !== window.currentRenderId) return;
+    const area = document.getElementById('materialFormArea');
+    if (!area) return;
+    area.classList.remove('hidden');
+    area.innerHTML = `
     <div class="card">
       <h3 class="m-0">Add Course Material</h3>
       <div class="mt-20">
@@ -2957,14 +2949,18 @@ async function showMaterialForm() {
   `;
 
   UI.createRTE('matDesc');
-  UI.createFileUploader('materialUploaderContainer', {
-    bucket: 'materials',
-    pathPrefix: 'course-content',
-    onUploadSuccess: (url) => {
-      document.getElementById('matFileUrl').value = url;
-      document.getElementById('saveMatBtn').disabled = false;
-    }
-  });
+    UI.createFileUploader('materialUploaderContainer', {
+      bucket: 'materials',
+      pathPrefix: 'course-content',
+      onUploadSuccess: (url) => {
+        document.getElementById('matFileUrl').value = url;
+        document.getElementById('saveMatBtn').disabled = false;
+      }
+    });
+  } catch (error) {
+    console.error('Show material form error:', error);
+    UI.showNotification('Error opening material form: ' + error.message, 'error');
+  }
 }
 
 async function saveMaterial() {
@@ -3018,6 +3014,119 @@ async function deleteMaterial(id) {
 }
 
 // Consolidate global window assignments
+async function exportStudents(type) {
+    const headers = ['Name', 'Email', 'Course'];
+    const rows = TeacherState.currentStudents.map(s => [s.full_name || 'N/A', s.email, s.course_title || 'Unknown']);
+
+    if (type === 'csv') {
+        Exporter.csv('students_list.csv', headers, rows);
+    } else {
+        await Exporter.pdf('students_list.pdf', 'Enrolled Students List', headers, rows);
+    }
+}
+
+async function filterGradeBook() {
+    const { courses, assignments, quizzes, submissions, quizSubs } = TeacherState.gradeBookRawData;
+    const courseId = document.getElementById('gbCourseSelect').value;
+    const area = document.getElementById('gradeBookArea');
+    const renderId = window.currentRenderId;
+
+    try {
+        let filteredCourses = courseId ? courses.filter(c => c.id === courseId) : courses;
+        let courseIds = filteredCourses.map(c => c.id);
+
+        const { data: enrollments } = await SupabaseDB.getEnrollmentsByCourses(courseIds);
+        if (renderId !== window.currentRenderId) return;
+
+        TeacherState.currentGradeBookData = { filteredCourses, enrollments, assignments, quizzes, submissions, quizSubs };
+
+        let html = '';
+
+        for (const course of filteredCourses) {
+            const courseAssigns = assignments.filter(a => a.course_id === course.id && a.status === 'published');
+            const courseQuizzes = quizzes.filter(q => q.course_id === course.id && q.status === 'published');
+            const courseStudents = enrollments.filter(e => e.course_id === course.id).map(e => e.student_email);
+
+            if (courseStudents.length === 0) {
+                html += `<div class="card mb-20"><h3>${escapeHtml(course.title)}</h3><p class="empty small">No students enrolled.</p></div>`;
+                continue;
+            }
+
+            html += `
+                <div class="card mb-20" style="padding:0; overflow:hidden">
+                    <div class="p-15" style="background:var(--bg)">
+                        <h3 class="m-0">${escapeHtml(course.title)}</h3>
+                        <p class="tiny text-muted m-0">${courseStudents.length} Students | ${courseAssigns.length} Assignments | ${courseQuizzes.length} Quizzes</p>
+                    </div>
+                    <div style="overflow-x:auto">
+                        <table class="m-0">
+                            <thead>
+                                <tr>
+                                    <th style="min-width:200px">Student</th>
+                                    ${courseAssigns.map(a => `<th class="text-center" style="min-width:120px" title="${escapeAttr(a.title)}">📝 ${escapeHtml(a.title.substring(0,10))}...</th>`).join('')}
+                                    ${courseQuizzes.map(q => `<th class="text-center" style="min-width:120px" title="${escapeAttr(q.title)}">❓ ${escapeHtml(q.title.substring(0,10))}...</th>`).join('')}
+                                    <th class="text-center" style="min-width:100px; background:#f8fafc">Final Avg</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${courseStudents.map(email => {
+                                    let earnedPoints = 0;
+                                    let itemsCount = 0;
+
+                                    const assignmentCells = courseAssigns.map(a => {
+                                        const sub = submissions.find(s => s.assignment_id === a.id && s.student_email === email);
+                                        if (sub && sub.status === 'graded') {
+                                            earnedPoints += sub.final_grade;
+                                            itemsCount++;
+                                            return `
+                                                <td class="text-center">
+                                                    <span class="badge ${sub.final_grade >= 70 ? 'badge-active' : 'badge-warn'}">${sub.final_grade}%</span>
+                                                    <div class="tiny text-muted mt-5">${sub.grade} / ${a.points_possible}</div>
+                                                </td>`;
+                                        }
+                                        return `<td class="text-center"><span class="tiny text-muted">-</span></td>`;
+                                    }).join('');
+
+                                    const quizCells = courseQuizzes.map(q => {
+                                        const sub = quizSubs.filter(s => s.quiz_id === q.id && s.student_email === email && s.status === 'submitted')
+                                                            .sort((a,b) => (b.score || 0) - (a.score || 0))[0];
+                                        if (sub) {
+                                            earnedPoints += sub.score;
+                                            itemsCount++;
+                                            const rawScore = Math.round((sub.score / 100) * sub.total_points);
+                                            return `
+                                                <td class="text-center">
+                                                    <span class="badge ${sub.score >= 70 ? 'badge-active' : 'badge-warn'}">${sub.score}%</span>
+                                                    <div class="tiny text-muted mt-5">${rawScore} / ${sub.total_points}</div>
+                                                </td>`;
+                                        }
+                                        return `<td class="text-center"><span class="tiny text-muted">-</span></td>`;
+                                    }).join('');
+
+                                    const avg = itemsCount > 0 ? Math.round(earnedPoints / itemsCount) : 0;
+
+                                    return `
+                                        <tr>
+                                            <td><div class="bold small">${escapeHtml(email)}</div></td>
+                                            ${assignmentCells}
+                                            ${quizCells}
+                                            <td class="text-center" style="background:#f8fafc"><strong class="${avg >= 70 ? 'success-text' : 'danger-text'}">${itemsCount > 0 ? avg + '%' : '-'}</strong></td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+        area.innerHTML = html || '<div class="empty">No data available.</div>';
+    } catch (error) {
+        console.error('Filter Grade Book error:', error);
+        UI.showNotification('Error filtering grade book: ' + error.message, 'error');
+    }
+}
+
 window.toggleTeacherAssignmentType = (select) => {
     const container = select.parentElement.parentElement.parentElement.querySelector('.q-type-ext');
     if (select.value === 'file') {
@@ -3095,6 +3204,8 @@ window.updateACPreview = updateACPreview;
 window.clearStudentViolations = clearStudentViolations;
 window.viewAssessmentViolations = viewAssessmentViolations;
 window.viewStudentIntegrityReport = viewStudentIntegrityReport;
+window.exportStudents = exportStudents;
+window.filterGradeBook = filterGradeBook;
 
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await initDashboard('teacher');
