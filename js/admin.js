@@ -443,6 +443,81 @@ window.renderResets = renderResets;
 window.renderViolations = renderViolations;
 window.renderAnalytics = renderAnalytics;
 window.renderReports = renderReports;
+
+async function approveCert(certId) {
+    if (!await UI.confirm('Are you sure you want to approve this certificate?')) return;
+    try {
+        await SupabaseDB.updateCertificateStatus(certId, 'approved');
+        UI.showNotification('Certificate approved!', 'success');
+        renderReports('certificates');
+    } catch (e) {
+        UI.showNotification('Error: ' + e.message, 'error');
+    }
+}
+
+async function rejectCert(certId) {
+    const reason = await UI.requestInput('Rejection Reason', 'Please provide a reason for rejection:');
+    if (reason === null) return;
+    try {
+        await SupabaseDB.updateCertificateStatus(certId, 'rejected', { reason });
+        UI.showNotification('Certificate rejected', 'info');
+        renderReports('certificates');
+    } catch (e) {
+        UI.showNotification('Error: ' + e.message, 'error');
+    }
+}
+
+async function consolidateAndApproveCert(certId, studentEmail) {
+    if (!await UI.confirm('This will create a new consolidated certificate with ALL student enrolled courses. Proceed?')) return;
+
+    try {
+        const student = await SupabaseDB.getUser(studentEmail);
+        const enrollments = await SupabaseDB.getEnrollments(studentEmail);
+        const courses = enrollments.data.map(e => e.courses);
+
+        const verificationId = crypto.randomUUID().slice(0, 13).toUpperCase();
+        const issueDate = new Date().toISOString();
+
+        const doc = await CertificateGenerator.generatePDF(
+            student.full_name,
+            'All Enrolled Courses',
+            issueDate,
+            verificationId,
+            { type: 'consolidated', courses: courses }
+        );
+
+        if (!doc) throw new Error('PDF Generation failed');
+
+        const pdfBlob = doc.output('blob');
+        const path = `certificates/${studentEmail}/consolidated_${TimerManager.getTime()}.pdf`;
+        await SupabaseDB.uploadFile('certificates', path, pdfBlob);
+        const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
+
+        await SupabaseDB._update('certificates', certId, {
+            certificate_url: certUrl,
+            status: 'approved',
+            type: 'consolidated',
+            updated_at: issueDate
+        });
+
+        await SupabaseDB.createNotification({
+            user_email: studentEmail,
+            title: 'Consolidated Certificate Issued',
+            message: 'Your consolidated certificate including all courses is now available.',
+            type: 'cert_approved'
+        });
+
+        UI.showNotification('Consolidated certificate approved!', 'success');
+        renderReports('certificates');
+    } catch (e) {
+        console.error('Consolidation error:', e);
+        UI.showNotification('Error: ' + e.message, 'error');
+    }
+}
+
+window.approveCert = approveCert;
+window.rejectCert = rejectCert;
+window.consolidateAndApproveCert = consolidateAndApproveCert;
 window.renderMaintenance = renderMaintenance;
 window.renderHealth = renderHealth;
 window.renderManagement = renderManagement;
@@ -1058,9 +1133,10 @@ async function renderResets() {
 }
 
 async function updateSidebarBadges() {
-  const [pendingResets, openTickets] = await Promise.all([
+  const [pendingResets, openTickets, pendingCerts] = await Promise.all([
     SupabaseDB.getCount('users', q => q.eq('reset_request->>status', 'pending')),
-    SupabaseDB.getCount('support_tickets', q => q.or('status.eq.open,status.eq.pending'))
+    SupabaseDB.getCount('support_tickets', q => q.or('status.eq.open,status.eq.pending')),
+    SupabaseDB.getCount('certificates', q => q.in('status', ['requested', 'pending_approval']))
   ]);
 
   const resetBadge = document.getElementById('resetBadge');
@@ -1073,6 +1149,12 @@ async function updateSidebarBadges() {
   if (supportBadge) {
     supportBadge.textContent = openTickets;
     supportBadge.style.display = openTickets > 0 ? 'inline-block' : 'none';
+  }
+
+  const reportsBadge = document.getElementById('reportsBadge');
+  if (reportsBadge) {
+    reportsBadge.textContent = pendingCerts;
+    reportsBadge.style.display = pendingCerts > 0 ? 'inline-block' : 'none';
   }
 }
 
@@ -1219,14 +1301,30 @@ async function renderReports(tab = 'submissions', page = 1) {
         } else if (tab === 'certificates') {
             res = await SupabaseDB.getCertificates(null, { page, pageSize });
             if (renderId !== window.currentRenderId) return;
-            UI.renderTable('reportsTable', ['User', 'Course', 'Issued At', 'Action'], res.data, (c) => `
+            UI.renderTable('reportsTable', ['User', 'Course/Type', 'Status', 'Info', 'Action'], res.data, (c) => {
+                const isPending = c.status === 'pending_approval' || c.status === 'requested';
+                const typeLabel = c.type === 'consolidated' ? '<span class="badge-active">CONSOLIDATED</span>' : '<span class="badge-inactive">SINGLE</span>';
+                return `
                 <tr>
                     <td><div class="small bold">${escapeHtml(c.student_email)}</div></td>
-                    <td><div class="small">${escapeHtml(c.courses?.title || 'Unknown')}</div></td>
-                    <td><div class="tiny">${new Date(c.issued_at).toLocaleString()}</div></td>
-                    <td><button class="button secondary tiny w-auto" onclick="UI.viewFile('${escapeAttr(c.certificate_url)}', 'Certificate')">View</button></td>
+                    <td>
+                        <div class="small">${escapeHtml(c.courses?.title || 'Consolidated')}</div>
+                        <div class="tiny">${typeLabel}</div>
+                    </td>
+                    <td><span class="badge-${c.status === 'approved' ? 'active' : (c.status === 'rejected' ? 'inactive' : 'warn')}">${c.status.toUpperCase()}</span></td>
+                    <td><div class="tiny text-muted">${escapeHtml(c.request_reason || 'Manual Issuance')}</div></td>
+                    <td>
+                        <div class="flex gap-5">
+                            <button class="button secondary tiny w-auto" onclick="UI.viewFile('${escapeAttr(c.certificate_url)}', 'Certificate')">View</button>
+                            ${isPending ? `
+                                <button class="button small tiny w-auto" onclick="approveCert('${escapeAttr(c.id)}')">Approve</button>
+                                <button class="button small tiny w-auto" onclick="consolidateAndApproveCert('${escapeAttr(c.id)}', '${escapeAttr(c.student_email)}')">Consolidate & Approve</button>
+                                <button class="button danger tiny w-auto" onclick="rejectCert('${escapeAttr(c.id)}')">Reject</button>
+                            ` : ''}
+                        </div>
+                    </td>
                 </tr>
-            `);
+            `});
         } else if (tab === 'study_sessions') {
             res = await SupabaseDB.getStudySessions(null, { page, pageSize });
             if (renderId !== window.currentRenderId) return;

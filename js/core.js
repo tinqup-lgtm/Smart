@@ -1479,7 +1479,7 @@ async function updateMaintBanner() {
 window.NotificationManager = NotificationManager;
 
 const CertificateGenerator = {
-    async generatePDF(studentName, courseTitle, issueDate, verificationId) {
+    async generatePDF(studentName, courseTitle, issueDate, verificationId, options = {}) {
         if (!window.jspdf) {
             console.error('jsPDF not loaded');
             return null;
@@ -1494,53 +1494,123 @@ const CertificateGenerator = {
         const width = doc.internal.pageSize.getWidth();
         const height = doc.internal.pageSize.getHeight();
 
-        // Background
-        doc.setFillColor(248, 246, 255);
+        // High-end background and textures
+        doc.setFillColor(255, 255, 255);
         doc.rect(0, 0, width, height, 'F');
 
-        // Border
-        doc.setDrawColor(91, 46, 166);
-        doc.setLineWidth(2);
-        doc.rect(10, 10, width - 20, height - 20);
-        doc.setLineWidth(0.5);
-        doc.rect(12, 12, width - 24, height - 24);
+        // Subtle watermark-like pattern (placeholder for complex graphics)
+        doc.setDrawColor(240, 240, 240);
+        for(let i=0; i<width; i+=40) {
+            doc.line(i, 0, i+20, height);
+        }
 
-        // Header
+        // Professional Border System
+        doc.setDrawColor(218, 165, 32); // Golden
+        doc.setLineWidth(1.5);
+        doc.rect(5, 5, width - 10, height - 10);
+
+        doc.setDrawColor(91, 46, 166); // Primary Brand
+        doc.setLineWidth(0.8);
+        doc.rect(8, 8, width - 16, height - 16);
+
+        // Professional Corner Decorations
+        doc.setDrawColor(218, 165, 32);
+        doc.setLineWidth(3);
+        doc.line(8, 8, 25, 8); doc.line(8, 8, 8, 25); // Top Left
+        doc.line(width-8, 8, width-25, 8); doc.line(width-8, 8, width-8, 25); // Top Right
+        doc.line(8, height-8, 25, height-8); doc.line(8, height-8, 8, height-25); // Bottom Left
+        doc.line(width-8, height-8, width-25, height-8); doc.line(width-8, height-8, width-8, height-25); // Bottom Right
+
+        // Typography - Header
         doc.setTextColor(91, 46, 166);
-        doc.setFontSize(40);
+        doc.setFontSize(48);
         doc.setFont('helvetica', 'bold');
-        doc.text('CERTIFICATE OF COMPLETION', width / 2, 40, { align: 'center' });
+        doc.text('CERTIFICATE', width / 2, 45, { align: 'center', charSpace: 2 });
 
-        // Body
+        doc.setFontSize(18);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(100, 100, 100);
+        doc.text('OF COMPLETION', width / 2, 55, { align: 'center', charSpace: 4 });
+
+        // Body Content
         doc.setTextColor(34, 34, 34);
-        doc.setFontSize(20);
-        doc.setFont('helvetica', 'normal');
-        doc.text('This is to certify that', width / 2, 65, { align: 'center' });
+        doc.setFontSize(16);
+        doc.text('THIS IS TO CERTIFY THAT', width / 2, 75, { align: 'center' });
 
-        doc.setFontSize(32);
+        doc.setFontSize(36);
         doc.setFont('helvetica', 'bold');
-        doc.text(studentName, width / 2, 85, { align: 'center' });
+        doc.setTextColor(0, 0, 0);
+        doc.text(studentName.toUpperCase(), width / 2, 95, { align: 'center' });
 
-        doc.setFontSize(20);
+        doc.setDrawColor(200, 200, 200);
+        doc.setLineWidth(0.5);
+        doc.line(width/2 - 60, 100, width/2 + 60, 100);
+
+        doc.setFontSize(16);
         doc.setFont('helvetica', 'normal');
-        doc.text('has successfully completed the course', width / 2, 105, { align: 'center' });
+        doc.setTextColor(60, 60, 60);
 
-        doc.setFontSize(26);
-        doc.setFont('helvetica', 'bold');
-        doc.text(courseTitle, width / 2, 125, { align: 'center' });
+        const isConsolidated = options.type === 'consolidated';
+        const mainText = isConsolidated
+            ? 'HAS SUCCESSFULLY COMPLETED ALL PRESCRIBED REQUIREMENTS FOR'
+            : 'HAS SUCCESSFULLY COMPLETED THE COURSE';
+        doc.text(mainText, width / 2, 115, { align: 'center' });
 
-        // Footer
-        doc.setFontSize(14);
+        if (isConsolidated && options.courses) {
+            doc.setFontSize(14);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(91, 46, 166);
+            let y = 125;
+            options.courses.slice(0, 5).forEach(c => {
+                doc.text(`• ${c.title || c}`, width / 2, y, { align: 'center' });
+                y += 8;
+            });
+            if (options.courses.length > 5) {
+                doc.text(`...and ${options.courses.length - 5} more courses`, width / 2, y, { align: 'center' });
+            }
+        } else {
+            doc.setFontSize(28);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(91, 46, 166);
+            doc.text(courseTitle, width / 2, 130, { align: 'center' });
+        }
+
+        // Signatures Section
+        const sigY = 175;
+        doc.setDrawColor(150, 150, 150);
+        doc.setLineWidth(0.5);
+
+        // Left Signature (Teacher)
+        doc.line(40, sigY, 100, sigY);
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'italic');
+        doc.setTextColor(100, 100, 100);
+        doc.text(options.teacherName || 'Lead Instructor', 70, sigY + 7, { align: 'center' });
         doc.setFont('helvetica', 'normal');
-        doc.text(`Issued on: ${new Date(issueDate).toLocaleDateString()}`, width / 2, 155, { align: 'center' });
-        doc.text(`Verification ID: ${verificationId}`, width / 2, 165, { align: 'center' });
+        doc.text('Course Teacher', 70, sigY + 13, { align: 'center' });
 
-        // Logo / Stamp Placeholder
+        // Right Signature (Admin)
+        doc.line(width - 100, sigY, width - 40, sigY);
+        doc.setFont('helvetica', 'italic');
+        doc.text('SmartLMS Administration', width - 70, sigY + 7, { align: 'center' });
+        doc.setFont('helvetica', 'normal');
+        doc.text('Authorized Official', width - 70, sigY + 13, { align: 'center' });
+
+        // Verification Footer
         doc.setDrawColor(91, 46, 166);
-        doc.setLineWidth(1);
-        doc.circle(width / 2, 185, 10);
+        doc.setLineWidth(0.2);
+        doc.rect(width/2 - 25, 165, 50, 25); // Stamp box
+        doc.setFontSize(8);
+        doc.text('OFFICIAL STAMP', width/2, 172, { align: 'center' });
         doc.setFontSize(10);
-        doc.text('SmartLMS', width / 2, 186, { align: 'center' });
+        doc.setFont('helvetica', 'bold');
+        doc.text('VERIFIED', width/2, 185, { align: 'center' });
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(150, 150, 150);
+        doc.text(`ID: ${verificationId}`, width / 2, 200, { align: 'center' });
+        doc.text(`Issued: ${new Date(issueDate).toLocaleDateString()}`, width / 2, 205, { align: 'center' });
 
         return doc;
     }
