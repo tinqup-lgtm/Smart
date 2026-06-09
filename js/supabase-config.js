@@ -272,6 +272,21 @@ class SupabaseDB {
         });
     }
 
+    /**
+     * Retrieves all active administrator users.
+     */
+    static async getAdmins() {
+        return this._request(async () => {
+            const { data, error } = await supabaseClient
+                .from('users')
+                .select('email')
+                .eq('role', 'admin')
+                .eq('active', true);
+            if (error) throw error;
+            return data || [];
+        });
+    }
+
     static async getEnrolledStudents(courseIds) {
         if (!courseIds || courseIds.length === 0) return { data: [], total: 0 };
         return this._request(async () => {
@@ -1326,15 +1341,22 @@ class SupabaseDB {
         };
         const data = await this._upsert('certificates', payload);
 
-        // Notify admin for approval
+        // Notify admins for approval
         if (payload.status === 'pending_approval') {
-            await this.createNotification(
-                'admin@smartlms.edu',
-                'Certificate Approval Required',
-                `Teacher ${user.full_name} issued a certificate to ${certificate.student_email}. Approval needed.`,
-                null,
-                'cert_issued'
-            );
+            try {
+                const admins = await this.getAdmins();
+                for (const admin of admins) {
+                    await this.createNotification(
+                        admin.email,
+                        'Certificate Approval Required',
+                        `Teacher ${user.full_name} issued a certificate to ${certificate.student_email}. Approval needed.`,
+                        null,
+                        'cert_issued'
+                    );
+                }
+            } catch (e) {
+                console.warn('Failed to notify admins of certificate issuance:', e);
+            }
         }
 
         _cache.invalidate('certificates');
@@ -1350,14 +1372,21 @@ class SupabaseDB {
         };
         const data = await this._upsert('certificates', payload);
 
-        // Notify admin
-        await this.createNotification(
-            'admin@smartlms.edu',
-            'New Certificate Request',
-            `Student ${studentEmail} requested a certificate for a course.`,
-            null,
-            'cert_requested'
-        );
+        // Notify the course teacher
+        try {
+            const course = await this.getCourse(courseId);
+            if (course && course.teacher_email) {
+                await this.createNotification(
+                    course.teacher_email,
+                    'New Certificate Request',
+                    `Student ${studentEmail} requested a certificate for your course "${course.title}".`,
+                    'teacher.html?page=certificates',
+                    'cert_requested'
+                );
+            }
+        } catch (e) {
+            console.warn('Failed to notify teacher of certificate request:', e);
+        }
 
         _cache.invalidate('certificates');
         return data?.[0];
@@ -1390,10 +1419,11 @@ class SupabaseDB {
         return data;
     }
 
-    static async getCertificates(studentEmail = null, options = {}) {
+    static async getCertificates(studentEmail = null, teacherEmail = null, options = {}) {
         return this._request(async () => {
             let query = supabaseClient.from('certificates').select('*, courses(*)', { count: 'exact' });
             if (studentEmail) query = query.eq('student_email', studentEmail);
+            if (teacherEmail) query = query.eq('teacher_email', teacherEmail);
 
             return this._getPaginated(query.order('updated_at', { ascending: false }), options);
         });

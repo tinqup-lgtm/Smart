@@ -700,34 +700,101 @@ async function unenrollStudent(courseId, studentEmail) {
   }
 }
 
-async function showCertForm(studentEmail) {
+async function renderCertificates() {
+  const renderId = ++window.currentRenderId;
+  const content = document.getElementById('pageContent');
+  if (!content) return;
+  clearActiveCountdowns();
+
+  try {
+    const user = await SessionManager.getCurrentUser();
+    if (renderId !== window.currentRenderId) return;
+
+    // Fetch teacher's courses first to filter certificates
+    const { data: myCourses } = await SupabaseDB.getCourses(user.email, null);
+    const myCourseIds = (myCourses || []).map(c => c.id);
+
+    // Fetch all certificates related to this teacher
+    const { data: certs } = await SupabaseDB.getCertificates(null, user.email);
+    if (renderId !== window.currentRenderId) return;
+
+    content.innerHTML = `
+      <div class="flex-between mb-20">
+        <h2 class="m-0">Course Certificates</h2>
+        <div class="small text-muted">${certs.length} Total Certificates</div>
+      </div>
+      <div id="certsTable"></div>
+      <div id="certFormArea" class="hidden mt-20"></div>
+    `;
+
+    UI.renderTable('certsTable', ['Student', 'Course', 'Status', 'Date', 'Action'], certs, (c) => {
+        const isRequested = c.status === 'requested';
+        let statusBadge = 'badge-warn';
+        if (c.status === 'approved') statusBadge = 'badge-active';
+        else if (c.status === 'rejected') statusBadge = 'badge-inactive';
+
+        return `
+            <tr>
+              <td>
+                <div class="bold small">${escapeHtml(c.student_email)}</div>
+              </td>
+              <td>${escapeHtml(c.courses?.title || 'Unknown')}</td>
+              <td><span class="badge ${statusBadge}">${c.status.toUpperCase()}</span></td>
+              <td>${new Date(c.updated_at).toLocaleDateString()}</td>
+              <td>
+                <div class="flex gap-5">
+                  ${isRequested ? `
+                    <button class="button small w-auto" onclick="showCertForm('${escapeAttr(c.student_email)}', '${escapeAttr(c.course_id)}', '${escapeAttr(c.id)}')">Issue Certificate</button>
+                  ` : `
+                    <button class="button secondary tiny w-auto" onclick="UI.viewFile('${escapeAttr(c.certificate_url)}', 'Certificate')">View</button>
+                  `}
+                </div>
+              </td>
+            </tr>
+        `;
+    }, { emptyMessage: 'No certificates requested or issued yet.' });
+
+  } catch (error) {
+    console.error('Certificates error:', error);
+    UI.showNotification('Error loading certificates: ' + error.message, 'error');
+  }
+}
+
+async function showCertForm(studentEmail, targetCourseId = null, requestedCertId = null) {
   const renderId = window.currentRenderId;
   try {
     const user = await SessionManager.getCurrentUser();
     if (renderId !== window.currentRenderId) return;
 
-    // Filter courses: only show courses where the student is actually enrolled
-    const studentEnrolledCourseIds = TeacherState.currentStudents
-        .filter(s => s.email === studentEmail)
-        .map(s => s.course_id);
+    let courses = [];
+    if (targetCourseId) {
+        const course = await SupabaseDB.getCourse(targetCourseId);
+        courses = [course];
+    } else {
+        // Filter courses: only show courses where the student is actually enrolled
+        const studentEnrolledCourseIds = TeacherState.currentStudents
+            .filter(s => s.email === studentEmail)
+            .map(s => s.course_id);
 
-    const { data: allCourses } = await SupabaseDB.getCourses(user.email, null);
-    if (renderId !== window.currentRenderId) return;
+        const { data: allCourses } = await SupabaseDB.getCourses(user.email, null);
+        if (renderId !== window.currentRenderId) return;
 
-    const courses = allCourses.filter(c => studentEnrolledCourseIds.includes(c.id));
+        courses = allCourses.filter(c => studentEnrolledCourseIds.includes(c.id));
+    }
 
     const area = document.getElementById('certFormArea');
     if (!area) return;
     area.classList.remove('hidden');
+    area.scrollIntoView({ behavior: 'smooth' });
     area.innerHTML = `
     <div class="card">
       <h3 class="m-0">Issue Certificate to ${escapeHtml(studentEmail)}</h3>
       <label class="mt-15">Select Course</label>
-      <select id="certCourseId">${courses.map(c => `<option value="${escapeAttr(c.id)}">${escapeHtml(c.title)}</option>`).join('')}</select>
+      <select id="certCourseId">${courses.map(c => `<option value="${escapeAttr(c.id)}" ${targetCourseId === c.id ? 'selected' : ''}>${escapeHtml(c.title)}</option>`).join('')}</select>
       ${courses.length === 0 ? '<p class="tiny danger-text mt-5">Student is not enrolled in any of your courses.</p>' : ''}
       <p class="small mt-10">This will generate a official PDF certificate and award it to the student.</p>
       <div class="flex gap-10 mt-15">
-        <button class="button w-auto px-30" id="issueCertBtn" onclick="issueCert('${escapeAttr(studentEmail)}')" ${courses.length === 0 ? 'disabled' : ''}>Issue & Generate PDF</button>
+        <button class="button w-auto px-30" id="issueCertBtn" onclick="issueCert('${escapeAttr(studentEmail)}', '${escapeAttr(requestedCertId || '')}')" ${courses.length === 0 ? 'disabled' : ''}>Issue & Generate PDF</button>
         <button class="button secondary w-auto px-30" onclick="document.getElementById('certFormArea').classList.add('hidden')">Cancel</button>
       </div>
     </div>
@@ -738,18 +805,26 @@ async function showCertForm(studentEmail) {
   }
 }
 
-async function issueCert(studentEmail) {
+async function issueCert(studentEmail, existingId = null) {
   const btn = document.getElementById('issueCertBtn');
   btn.disabled = true; btn.textContent = 'Generating...';
 
   const courseId = document.getElementById('certCourseId').value;
-  const student = await SupabaseDB.getUser(studentEmail);
-  const course = await SupabaseDB.getCourse(courseId);
-  const verificationId = crypto.randomUUID().slice(0, 13).toUpperCase();
-  const issueDate = new Date().toISOString();
 
   try {
-    const doc = await CertificateGenerator.generatePDF(student.full_name, course.title, issueDate, verificationId);
+    const user = await SessionManager.getCurrentUser();
+    const student = await SupabaseDB.getUser(studentEmail);
+    const course = await SupabaseDB.getCourse(courseId);
+
+    if (!student || !course) throw new Error('Student or Course data not found');
+
+    const verificationId = crypto.randomUUID().slice(0, 13).toUpperCase();
+    const issueDate = new Date().toISOString();
+
+    const doc = await CertificateGenerator.generatePDF(student.full_name, course.title, issueDate, verificationId, {
+        teacherName: user.full_name
+    });
+
     if (!doc) throw new Error('PDF Generation failed');
 
     // Upload to Supabase Storage
@@ -759,7 +834,7 @@ async function issueCert(studentEmail) {
     const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
 
     await SupabaseDB.issueCertificate({
-      id: crypto.randomUUID(),
+      id: existingId || crypto.randomUUID(),
       student_email: studentEmail,
       course_id: courseId,
       certificate_url: certUrl,
@@ -768,9 +843,15 @@ async function issueCert(studentEmail) {
     });
 
     UI.showNotification('Certificate issued and sent to admin for approval.', 'success');
-    renderStudents();
+
+    if (document.querySelector('[data-page="certificates"].active')) {
+        renderCertificates();
+    } else {
+        renderStudents();
+    }
+
     const area = document.getElementById('certFormArea');
-    if (area) area.style.display = 'none';
+    if (area) area.classList.add('hidden');
   } catch (e) {
     console.error('Cert Issue error:', e);
     UI.showNotification('Error issuing certificate: ' + e.message, 'error');
@@ -2850,6 +2931,7 @@ function initNav() {
         else if(page === 'gradebook') renderGradeBook();
         else if(page === 'students') renderStudents();
         else if(page === 'discussions') renderDiscussions();
+        else if(page === 'certificates') renderCertificates();
         else if(page === 'quizzes') renderQuizzes();
         else if(page === 'live') renderLiveClasses();
         else if(page === 'calendar') renderCalendar();
@@ -3179,6 +3261,7 @@ window.renderMaterials = renderMaterials;
 window.renderGrading = renderGrading;
 window.renderStudents = renderStudents;
 window.renderDiscussions = renderDiscussions;
+window.renderCertificates = renderCertificates;
 window.renderQuizzes = renderQuizzes;
 window.renderLiveClasses = renderLiveClasses;
 window.renderGradeBook = renderGradeBook;
