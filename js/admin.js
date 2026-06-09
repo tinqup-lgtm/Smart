@@ -485,7 +485,7 @@ async function consolidateAndApproveCert(certId, studentEmail) {
             'All Enrolled Courses',
             issueDate,
             verificationId,
-            { type: 'consolidated', courses: courses }
+            { type: 'consolidated', courses: courses, verificationUrl: `https://smartlms.edu/verify/${verificationId}` }
         );
 
         if (!doc) throw new Error('PDF Generation failed');
@@ -495,12 +495,11 @@ async function consolidateAndApproveCert(certId, studentEmail) {
         await SupabaseDB.uploadFile('certificates', path, pdfBlob);
         const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
 
-        await SupabaseDB._update('certificates', {
+        await SupabaseDB.updateCertificate(certId, {
             certificate_url: certUrl,
             status: 'approved',
-            type: 'consolidated',
-            updated_at: issueDate
-        }, { id: certId });
+            type: 'consolidated'
+        });
 
         await SupabaseDB.createNotification(
             studentEmail,
@@ -518,6 +517,35 @@ async function consolidateAndApproveCert(certId, studentEmail) {
     }
 }
 
+async function deleteCert(certId) {
+    if (!await UI.confirm('Are you sure you want to delete this certificate record and its file? This action cannot be undone.')) return;
+    try {
+        await SupabaseDB.deleteCertificate(certId);
+        UI.showNotification('Certificate deleted successfully.', 'info');
+        renderReports('certificates');
+    } catch (e) {
+        UI.showNotification('Error deleting certificate: ' + e.message, 'error');
+    }
+}
+
+async function editCert(certId) {
+    const { data: cert } = await supabaseClient.from('certificates').select('*').eq('id', certId).single();
+    const currentTitle = cert.metadata?.course_title || cert.courses?.title || (cert.type === 'consolidated' ? 'All Enrolled Courses' : '');
+
+    const newTitle = await UI.prompt('Enter new course title for this certificate:', currentTitle, 'Edit Certificate');
+    if (newTitle === null) return;
+
+    try {
+        await SupabaseDB.updateCertificate(certId, {
+            metadata: { ...(cert.metadata || {}), course_title: newTitle }
+        });
+        UI.showNotification('Certificate updated. Please note this only updates the display title in the dashboard, not the PDF.', 'info');
+        renderReports('certificates');
+    } catch (e) {
+        UI.showNotification('Error updating certificate: ' + e.message, 'error');
+    }
+}
+
 window.approveCert = approveCert;
 window.rejectCert = rejectCert;
 window.consolidateAndApproveCert = consolidateAndApproveCert;
@@ -528,6 +556,8 @@ window.renderSettings = renderSettings;
 window.renderSystem = renderSystem;
 window.editUser = editUser;
 window.toggleUserStatus = toggleUserStatus;
+window.editCert = editCert;
+window.deleteCert = deleteCert;
 window.deleteUserByEmail = deleteUserByEmail;
 window.lockUser = lockUser;
 window.unlockUser = unlockUser;
@@ -1307,23 +1337,26 @@ async function renderReports(tab = 'submissions', page = 1) {
             UI.renderTable('reportsTable', ['User', 'Course/Type', 'Status', 'Info', 'Action'], res.data, (c) => {
                 const canApprove = c.status === 'pending_approval';
                 const typeLabel = c.type === 'consolidated' ? '<span class="badge-active">CONSOLIDATED</span>' : '<span class="badge-inactive">SINGLE</span>';
+                const displayTitle = c.metadata?.course_title || c.courses?.title || 'Consolidated';
                 return `
                 <tr>
                     <td><div class="small bold">${escapeHtml(c.student_email)}</div></td>
                     <td>
-                        <div class="small">${escapeHtml(c.courses?.title || 'Consolidated')}</div>
+                        <div class="small">${escapeHtml(displayTitle)}</div>
                         <div class="tiny">${typeLabel}</div>
                     </td>
                     <td><span class="badge-${c.status === 'approved' ? 'active' : (c.status === 'rejected' ? 'inactive' : 'warn')}">${c.status.toUpperCase()}</span></td>
                     <td><div class="tiny text-muted">${escapeHtml(c.request_reason || 'Teacher Issued')}</div></td>
                     <td>
-                        <div class="flex gap-5">
+                        <div class="flex gap-5 flex-wrap">
                             <button class="button secondary tiny w-auto" onclick="UI.viewFile('${escapeAttr(c.certificate_url)}', 'Certificate')">View</button>
                             ${canApprove ? `
-                                <button class="button small tiny w-auto" onclick="approveCert('${escapeAttr(c.id)}')">Approve</button>
-                                <button class="button small tiny w-auto" onclick="consolidateAndApproveCert('${escapeAttr(c.id)}', '${escapeAttr(c.student_email)}')">Consolidate & Approve</button>
+                                <button class="button small tiny w-auto" style="background:var(--ok)" onclick="approveCert('${escapeAttr(c.id)}')">Approve</button>
+                                <button class="button small tiny w-auto" style="background:var(--purple)" onclick="consolidateAndApproveCert('${escapeAttr(c.id)}', '${escapeAttr(c.student_email)}')">Consolidate & Approve</button>
                                 <button class="button danger tiny w-auto" onclick="rejectCert('${escapeAttr(c.id)}')">Reject</button>
                             ` : ''}
+                            <button class="button secondary tiny w-auto" onclick="editCert('${escapeAttr(c.id)}')">Edit</button>
+                            <button class="button danger tiny w-auto" onclick="deleteCert('${escapeAttr(c.id)}')">Delete</button>
                         </div>
                     </td>
                 </tr>
