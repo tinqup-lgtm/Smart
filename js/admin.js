@@ -493,19 +493,20 @@ async function consolidateAndApproveCert(certId, studentEmail) {
         await SupabaseDB.uploadFile('certificates', path, pdfBlob);
         const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
 
-        await SupabaseDB._update('certificates', certId, {
+        await SupabaseDB._update('certificates', {
             certificate_url: certUrl,
             status: 'approved',
             type: 'consolidated',
             updated_at: issueDate
-        });
+        }, { id: certId });
 
-        await SupabaseDB.createNotification({
-            user_email: studentEmail,
-            title: 'Consolidated Certificate Issued',
-            message: 'Your consolidated certificate including all courses is now available.',
-            type: 'cert_approved'
-        });
+        await SupabaseDB.createNotification(
+            studentEmail,
+            'Consolidated Certificate Issued',
+            'Your consolidated certificate including all courses is now available.',
+            null,
+            'cert_approved'
+        );
 
         UI.showNotification('Consolidated certificate approved!', 'success');
         renderReports('certificates');
