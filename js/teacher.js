@@ -2184,6 +2184,178 @@ async function renderQuizzes() {
   }
 }
 
+function addQuizQuestionField(q = null) {
+  const container = document.getElementById('quizQuestionsContainer');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = 'question mb-20 card';
+  const qId = 'quiz-q-text-' + TimerManager.getTime() + Math.random().toString(36).substring(2, 9);
+  div.innerHTML = `
+    <div class="flex-between mb-15">
+      <h4 class="m-0">Quiz Question</h4>
+      <button type="button" class="button danger small w-auto" onclick="this.closest('.question').remove(); updateQuizTotalPoints();">Remove Question</button>
+    </div>
+    <div class="mb-10">
+      <label class="bold">Question Text:</label>
+      <textarea id="${qId}" class="q-text" placeholder="Enter quiz question here..." required style="display:none">${q ? escapeHtml(q.text) : ''}</textarea>
+    </div>
+    <div class="grid-2 mt-10">
+      <div>
+        <label class="small">Question Type:</label>
+        <select class="q-type" onchange="toggleQuizOptions(this)">
+          <option value="mcq" ${q?.type === 'mcq' ? 'selected' : ''}>Multiple Choice</option>
+          <option value="tf" ${q?.type === 'tf' ? 'selected' : ''}>True/False</option>
+          <option value="short" ${q?.type === 'short' ? 'selected' : ''}>Short Answer</option>
+        </select>
+      </div>
+      <div>
+        <label class="small">Points</label>
+        <input type="number" class="q-points" placeholder="Points" value="${q ? q.points : 5}">
+      </div>
+    </div>
+    <div class="q-options mt-10">
+      ${renderQuizOptions(q)}
+    </div>
+    <div class="mt-10">
+      <label class="small">Hint (optional)</label>
+      <input type="text" class="q-hint" placeholder="Hint..." value="${q?.hint ? escapeHtml(q.hint) : ''}">
+      <label class="small">Explanation (optional)</label>
+      <textarea class="q-explanation" placeholder="Explanation for correct answer..." rows="2">${q?.explanation ? escapeHtml(q.explanation) : ''}</textarea>
+    </div>
+  `;
+  container.appendChild(div);
+  UI.createRTE(qId, { minHeight: '60px' });
+  div.querySelector('.q-points').addEventListener('input', updateQuizTotalPoints);
+  div.querySelector('.q-points').addEventListener('change', updateQuizTotalPoints);
+  updateQuizTotalPoints();
+}
+
+function updateQuizTotalPoints() {
+  const total = Array.from(document.querySelectorAll('#quizQuestionsContainer .q-points'))
+      .reduce((sum, input) => sum + (parseFloat(input.value) || 0), 0);
+  const pointsInput = document.getElementById('quizTotalPoints');
+  if (pointsInput) pointsInput.value = total;
+}
+
+const renderQuizOptions = (q) => {
+  if (q?.type === 'tf') return `<select class="q-correct"><option value="True" ${q.correct === 'True' ? 'selected' : ''}>True</option><option value="False" ${q.correct === 'False' ? 'selected' : ''}>False</option></select>`;
+  if (q?.type === 'short') return `<input type="text" class="q-correct" placeholder="Correct Answer (Exact Match)" value="${q.correct || ''}">`;
+  const id = TimerManager.getTime() + Math.random();
+  return `<div class="mcq-options">${(q?.options || ['','','','']).map((opt, i) => `<div>Option ${i+1}: <input type="text" class="opt-val" value="${escapeHtml(opt)}"> <input type="radio" name="correct-${id}" ${q?.correct === i.toString() ? 'checked' : ''} value="${i}"> Correct</div>`).join('')}</div>`;
+};
+
+const toggleQuizOptions = (select) => {
+  const qItem = select.closest('.question');
+  const container = qItem.querySelector('.q-options');
+  if (container) container.innerHTML = renderQuizOptions({ type: select.value });
+};
+
+const shuffleQuizQuestions = () => {
+  const container = document.getElementById('quizQuestionsContainer');
+  const items = Array.from(container.children);
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    container.appendChild(items[j]);
+  }
+};
+
+async function handleQuizSave(e) {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = 'Saving...';
+
+  try {
+    const user = await SessionManager.getCurrentUser();
+    const quizId = document.getElementById('quizId').value;
+    const isEdit = !!quizId;
+
+    // Form Validation
+    const title = document.getElementById('quizTitle').value.trim();
+    const vTitle = Validator.required(title, 'Quiz title');
+    if (!vTitle.valid) throw new Error(vTitle.message);
+
+    const selCourseId = document.getElementById('quizCourseId').value;
+    if (!selCourseId) throw new Error('Course selection is required.');
+
+    const timeLimit = parseInt(document.getElementById('quizLimit').value) || 0;
+    const attemptsAllowed = parseInt(document.getElementById('quizAttempts').value) || 1;
+    const passingScore = parseInt(document.getElementById('quizPassingScore').value) || 60;
+    const startAtVal = document.getElementById('quizStartAt').value;
+    const endAtVal = document.getElementById('quizEndAt').value;
+
+    if (timeLimit < 0) throw new Error('Time limit cannot be negative.');
+    if (attemptsAllowed < 1) throw new Error('At least 1 attempt is required.');
+    if (passingScore < 0 || passingScore > 100) throw new Error('Passing score must be between 0 and 100.');
+    if (startAtVal && endAtVal && new Date(startAtVal) >= new Date(endAtVal)) throw new Error('Available Until date must be after Available From date.');
+
+    const questions = [];
+    document.querySelectorAll('#quizQuestionsContainer .question').forEach((item, idx) => {
+      const type = item.querySelector('.q-type').value;
+      const text = item.querySelector('.q-text').value.trim();
+      const points = parseInt(item.querySelector('.q-points').value) || 0;
+
+      const vQText = Validator.required(text, `Question ${idx + 1} text`);
+      if (!vQText.valid) throw new Error(vQText.message);
+      if (points < 0) throw new Error(`Question ${idx + 1} points cannot be negative.`);
+
+      const qData = {
+          text,
+          type,
+          points,
+          hint: item.querySelector('.q-hint').value,
+          explanation: item.querySelector('.q-explanation').value
+      };
+
+      if (type === 'mcq') {
+        qData.options = Array.from(item.querySelectorAll('.opt-val')).map(i => i.value.trim());
+        if (qData.options.some(o => !o)) throw new Error(`Question ${idx + 1} has empty options.`);
+        const checked = item.querySelector('input[type="radio"]:checked');
+        if (!checked) throw new Error(`Question ${idx + 1} (MCQ) must have a correct answer selected.`);
+        qData.correct = checked.value;
+      } else if (type === 'tf') {
+        qData.correct = item.querySelector('.q-correct').value;
+      } else {
+        qData.correct = item.querySelector('.q-correct').value.trim();
+        if (!qData.correct) throw new Error(`Question ${idx + 1} (Short Answer) requires a correct answer.`);
+      }
+      questions.push(qData);
+    });
+
+    if (questions.length === 0) throw new Error('Quiz must have at least one question.');
+
+    const totalPoints = questions.reduce((sum, q) => sum + q.points, 0);
+    if (totalPoints <= 0) throw new Error('Total quiz points must be greater than zero.');
+
+    const acConfig = JSON.parse(document.getElementById('antiCheatConfigData').value || '{}');
+
+    await SupabaseDB.saveQuiz({
+      id: isEdit ? quizId : crypto.randomUUID(),
+      course_id: selCourseId,
+      teacher_email: user.email,
+      title: title,
+      description: document.getElementById('quizDesc').value,
+      time_limit: timeLimit,
+      attempts_allowed: attemptsAllowed,
+      passing_score: passingScore,
+      start_at: startAtVal ? new Date(startAtVal).toISOString() : null,
+      end_at: endAtVal ? new Date(endAtVal).toISOString() : null,
+      shuffle_questions: document.getElementById('quizShuffle').value === 'true',
+      status: document.getElementById('quizStatus').value,
+      anti_cheat_config: acConfig,
+      questions
+    });
+    UI.showNotification('Quiz saved successfully', 'success');
+    renderQuizzes();
+  } catch (err) {
+    UI.showNotification('Error saving quiz: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
 async function showQuizForm(quiz = null) {
   const renderId = window.currentRenderId;
   const isEdit = !!quiz;
@@ -2199,6 +2371,7 @@ async function showQuizForm(quiz = null) {
     <div class="card">
       <h2 class="m-0">${isEdit ? 'Edit Quiz' : 'Create Quiz'}</h2>
       <form id="quizForm" class="mt-20">
+        <input type="hidden" id="quizId" value="${isEdit ? quiz.id : ''}">
         <label>Quiz Title</label>
         <input type="text" id="quizTitle" placeholder="Quiz Title" value="${isEdit ? escapeHtml(quiz.title) : ''}" required>
         <label>Description</label>
@@ -2256,172 +2429,7 @@ async function showQuizForm(quiz = null) {
     </div>
   `;
   UI.createRTE('quizDesc');
-  function addQuizQuestionField(q = null) {
-    const container = document.getElementById('quizQuestionsContainer');
-    if (!container) return;
-    const div = document.createElement('div');
-    div.className = 'question mb-20 card';
-    const qId = 'quiz-q-text-' + TimerManager.getTime() + Math.random().toString(36).substring(2, 9);
-    div.innerHTML = `
-      <div class="flex-between mb-15">
-        <h4 class="m-0">Quiz Question</h4>
-        <button type="button" class="button danger small w-auto" onclick="this.closest('.question').remove(); updateQuizTotalPoints();">Remove Question</button>
-      </div>
-      <div class="mb-10">
-        <label class="bold">Question Text:</label>
-        <textarea id="${qId}" class="q-text" placeholder="Enter quiz question here..." required style="display:none">${q ? escapeHtml(q.text) : ''}</textarea>
-      </div>
-      <div class="grid-2 mt-10">
-        <div>
-          <label class="small">Question Type:</label>
-          <select class="q-type" onchange="toggleQuizOptions(this)">
-            <option value="mcq" ${q?.type === 'mcq' ? 'selected' : ''}>Multiple Choice</option>
-            <option value="tf" ${q?.type === 'tf' ? 'selected' : ''}>True/False</option>
-            <option value="short" ${q?.type === 'short' ? 'selected' : ''}>Short Answer</option>
-          </select>
-        </div>
-        <div>
-          <label class="small">Points</label>
-          <input type="number" class="q-points" placeholder="Points" value="${q ? q.points : 5}">
-        </div>
-      </div>
-      <div class="q-options mt-10">
-        ${renderQuizOptions(q)}
-      </div>
-      <div class="mt-10">
-        <label class="small">Hint (optional)</label>
-        <input type="text" class="q-hint" placeholder="Hint..." value="${q?.hint ? escapeHtml(q.hint) : ''}">
-        <label class="small">Explanation (optional)</label>
-        <textarea class="q-explanation" placeholder="Explanation for correct answer..." rows="2">${q?.explanation ? escapeHtml(q.explanation) : ''}</textarea>
-      </div>
-    `;
-    container.appendChild(div);
-    UI.createRTE(qId, { minHeight: '60px' });
-    div.querySelector('.q-points').addEventListener('input', updateQuizTotalPoints);
-    div.querySelector('.q-points').addEventListener('change', updateQuizTotalPoints);
-    updateQuizTotalPoints();
-  }
-
-  function updateQuizTotalPoints() {
-    const total = Array.from(document.querySelectorAll('#quizQuestionsContainer .q-points'))
-        .reduce((sum, input) => sum + (parseFloat(input.value) || 0), 0);
-    const pointsInput = document.getElementById('quizTotalPoints');
-    if (pointsInput) pointsInput.value = total;
-  }
   updateACPreview();
-  const renderQuizOptions = (q) => {
-    if (q?.type === 'tf') return `<select class="q-correct"><option value="True" ${q.correct === 'True' ? 'selected' : ''}>True</option><option value="False" ${q.correct === 'False' ? 'selected' : ''}>False</option></select>`;
-    if (q?.type === 'short') return `<input type="text" class="q-correct" placeholder="Correct Answer (Exact Match)" value="${q.correct || ''}">`;
-    const id = TimerManager.getTime() + Math.random();
-    return `<div class="mcq-options">${(q?.options || ['','','','']).map((opt, i) => `<div>Option ${i+1}: <input type="text" class="opt-val" value="${escapeHtml(opt)}"> <input type="radio" name="correct-${id}" ${q?.correct === i.toString() ? 'checked' : ''} value="${i}"> Correct</div>`).join('')}</div>`;
-  };
-  const toggleQuizOptions = (select) => {
-    const qItem = select.closest('.question');
-    const container = qItem.querySelector('.q-options');
-    if (container) container.innerHTML = renderQuizOptions({ type: select.value });
-  };
-  const shuffleQuizQuestions = () => {
-    const container = document.getElementById('quizQuestionsContainer');
-    const items = Array.from(container.children);
-    for (let i = items.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      container.appendChild(items[j]);
-    }
-  };
-
-  async function handleQuizSave(e) {
-    e.preventDefault();
-    const btn = e.target.querySelector('button[type="submit"]');
-    btn.disabled = true;
-    const originalText = btn.textContent;
-    btn.textContent = 'Saving...';
-
-    try {
-      const user = await SessionManager.getCurrentUser();
-
-      // Form Validation
-      const title = document.getElementById('quizTitle').value.trim();
-      const vTitle = Validator.required(title, 'Quiz title');
-      if (!vTitle.valid) throw new Error(vTitle.message);
-
-      const timeLimit = parseInt(document.getElementById('quizLimit').value) || 0;
-      const attemptsAllowed = parseInt(document.getElementById('quizAttempts').value) || 1;
-      const passingScore = parseInt(document.getElementById('quizPassingScore').value) || 60;
-      const startAt = document.getElementById('quizStartAt').value;
-      const endAt = document.getElementById('quizEndAt').value;
-
-      if (timeLimit < 0) throw new Error('Time limit cannot be negative.');
-      if (attemptsAllowed < 1) throw new Error('At least 1 attempt is required.');
-      if (passingScore < 0 || passingScore > 100) throw new Error('Passing score must be between 0 and 100.');
-      if (startAt && endAt && new Date(startAt) >= new Date(endAt)) throw new Error('Available Until date must be after Available From date.');
-
-      const questions = [];
-      document.querySelectorAll('#quizQuestionsContainer .question').forEach((item, idx) => {
-        const type = item.querySelector('.q-type').value;
-        const text = item.querySelector('.q-text').value.trim();
-        const points = parseInt(item.querySelector('.q-points').value) || 0;
-
-        const vQText = Validator.required(text, `Question ${idx + 1} text`);
-        if (!vQText.valid) throw new Error(vQText.message);
-        if (points < 0) throw new Error(`Question ${idx + 1} points cannot be negative.`);
-
-        const qData = {
-            text,
-            type,
-            points,
-            hint: item.querySelector('.q-hint').value,
-            explanation: item.querySelector('.q-explanation').value
-        };
-
-        if (type === 'mcq') {
-          qData.options = Array.from(item.querySelectorAll('.opt-val')).map(i => i.value.trim());
-          if (qData.options.some(o => !o)) throw new Error(`Question ${idx + 1} has empty options.`);
-          const checked = item.querySelector('input[type="radio"]:checked');
-          if (!checked) throw new Error(`Question ${idx + 1} (MCQ) must have a correct answer selected.`);
-          qData.correct = checked.value;
-        } else if (type === 'tf') {
-          qData.correct = item.querySelector('.q-correct').value;
-        } else {
-          qData.correct = item.querySelector('.q-correct').value.trim();
-          if (!qData.correct) throw new Error(`Question ${idx + 1} (Short Answer) requires a correct answer.`);
-        }
-        questions.push(qData);
-      });
-
-      if (questions.length === 0) throw new Error('Quiz must have at least one question.');
-
-      const totalPoints = questions.reduce((sum, q) => sum + q.points, 0);
-      if (totalPoints <= 0) throw new Error('Total quiz points must be greater than zero.');
-
-      const acConfig = JSON.parse(document.getElementById('antiCheatConfigData').value || '{}');
-
-      await SupabaseDB.saveQuiz({
-        ...quiz,
-        id: isEdit ? quiz.id : crypto.randomUUID(),
-        course_id: document.getElementById('quizCourseId').value,
-        teacher_email: user.email,
-        title: document.getElementById('quizTitle').value,
-        description: document.getElementById('quizDesc').value,
-        time_limit: timeLimit,
-        attempts_allowed: attemptsAllowed,
-        passing_score: passingScore,
-        start_at: startAt ? new Date(startAt).toISOString() : null,
-        end_at: endAt ? new Date(endAt).toISOString() : null,
-        shuffle_questions: document.getElementById('quizShuffle').value === 'true',
-        status: document.getElementById('quizStatus').value,
-        anti_cheat_config: acConfig,
-        questions
-      });
-      UI.showNotification('Quiz saved successfully', 'success');
-      renderQuizzes();
-    } catch (err) {
-      UI.showNotification('Error saving quiz: ' + err.message, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = originalText;
-    }
-  }
-
   if (isEdit && quiz.questions) { quiz.questions.forEach(q => addQuizQuestionField(q)); }
   document.getElementById('quizForm').addEventListener('submit', handleQuizSave);
 }
@@ -3184,6 +3192,11 @@ window.viewAssessmentViolations = viewAssessmentViolations;
 window.viewStudentIntegrityReport = viewStudentIntegrityReport;
 window.exportStudents = exportStudents;
 window.filterGradeBook = filterGradeBook;
+window.addQuizQuestionField = addQuizQuestionField;
+window.updateQuizTotalPoints = updateQuizTotalPoints;
+window.renderQuizOptions = renderQuizOptions;
+window.toggleQuizOptions = toggleQuizOptions;
+window.shuffleQuizQuestions = shuffleQuizQuestions;
 
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await initDashboard('teacher');
