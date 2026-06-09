@@ -123,14 +123,18 @@ class SupabaseDB {
         'reset_data'
     ];
 
-    static _sanitizePayload(payload) {
+    static _sanitizePayload(payload, table = null) {
         if (!payload || typeof payload !== 'object') return payload;
         const sanitized = { ...payload };
 
         // 1. Explicitly strip virtual/internal fields that don't belong in database tables
         // We also strip internal UI states (starting with _) to prevent leakage
         const VIRTUAL_FIELDS = ['password', 'session_id', 'has_secret', 'reset_data'];
-        VIRTUAL_FIELDS.forEach(field => delete sanitized[field]);
+        VIRTUAL_FIELDS.forEach(field => {
+            // Preservation logic: Do NOT strip session_id or reset_data if targeting user_secrets table
+            if (table === 'user_secrets' && (field === 'session_id' || field === 'reset_data')) return;
+            delete sanitized[field];
+        });
 
         Object.keys(sanitized).forEach(key => {
             const value = sanitized[key];
@@ -155,8 +159,8 @@ class SupabaseDB {
 
     static async _upsert(table, payload, onConflict = 'id') {
         const sanitized = Array.isArray(payload)
-            ? payload.map(p => this._sanitizePayload(p))
-            : this._sanitizePayload(payload);
+            ? payload.map(p => this._sanitizePayload(p, table))
+            : this._sanitizePayload(payload, table);
 
         return this._request(async () => {
             const { data, error } = await supabaseClient
@@ -173,7 +177,7 @@ class SupabaseDB {
      * Use this instead of _upsert when INSERT permissions are not granted (RLS).
      */
     static async _update(table, payload, filters) {
-        const sanitized = this._sanitizePayload(payload);
+        const sanitized = this._sanitizePayload(payload, table);
 
         return this._request(async () => {
             let query = supabaseClient.from(table).update(sanitized);
@@ -344,6 +348,10 @@ class SupabaseDB {
     }
 
     static async createUserSecure(user) {
+        // We skip _sanitizePayload here because we're passing individual fields to an RPC,
+        // and metadata is already expected to be a JSONB object.
+        const sanitizedMetadata = user.metadata || {};
+
         const { data, error } = await supabaseClient.rpc('create_user_secure', {
             p_email: user.email,
             p_full_name: user.full_name,
@@ -353,7 +361,7 @@ class SupabaseDB {
             p_session_id: user.session_id,
             p_invite_token: user.invite_token || null,
             p_active: user.active !== undefined ? user.active : true,
-            p_metadata: user.metadata || {}
+            p_metadata: sanitizedMetadata
         });
         if (error) throw error;
         if (!data.success) throw new Error(data.message);

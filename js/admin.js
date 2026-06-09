@@ -5,30 +5,31 @@
  * Tables without surrogate IDs (e.g., 'enrollments') use their natural composite keys.
  */
 const BACKUP_CONFIG = {
-    version: '1.2.0',
+    version: '1.1.1',
+    // Tables are ordered here by dependency to ensure safe restoration.
+    // Re-ordering for the requested export format is handled in exportBackup().
     tables: [
         { name: 'users', onConflict: 'email', orderBy: 'email', dependencies: [] },
+        { name: 'maintenance', onConflict: 'id', orderBy: 'id', dependencies: [] },
+        { name: 'support_tickets', onConflict: 'id', orderBy: 'created_at', dependencies: [] },
+        { name: 'invites', onConflict: 'token', orderBy: 'token', dependencies: [{ table: 'users', field: 'created_by' }] },
         { name: 'courses', onConflict: 'id', orderBy: 'id', dependencies: [{ table: 'users', field: 'teacher_email', optional: true }] },
+        { name: 'planner', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'users', field: 'user_email' }] },
+        { name: 'notifications', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'users', field: 'user_email' }] },
+        { name: 'assignments', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
+        { name: 'materials', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'topics', onConflict: 'id', orderBy: 'order_index', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'lessons', onConflict: 'id', orderBy: 'order_index', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'topics', field: 'topic_id', optional: true }, { table: 'users', field: 'teacher_email', optional: true }] },
-        { name: 'assignments', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'quizzes', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
-        { name: 'live_classes', onConflict: 'id', orderBy: 'start_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
-        { name: 'materials', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'enrollments', onConflict: 'course_id,student_email', orderBy: 'enrolled_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'student_email' }] },
+        { name: 'attendance', onConflict: 'id', orderBy: 'join_time', dependencies: [{ table: 'live_classes', field: 'live_class_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }, { table: 'courses', field: 'course_id', optional: true }] },
+        { name: 'study_sessions', onConflict: 'id', orderBy: 'started_at', dependencies: [{ table: 'users', field: 'user_email' }, { table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'submissions', onConflict: 'id', orderBy: 'submitted_at', dependencies: [{ table: 'assignments', field: 'assignment_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }, { table: 'courses', field: 'course_id', optional: true }] },
         { name: 'quiz_submissions', onConflict: 'id', orderBy: 'started_at', dependencies: [{ table: 'quizzes', field: 'quiz_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }, { table: 'courses', field: 'course_id', optional: true }] },
-        { name: 'attendance', onConflict: 'id', orderBy: 'join_time', dependencies: [{ table: 'live_classes', field: 'live_class_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }, { table: 'courses', field: 'course_id', optional: true }] },
-        { name: 'discussions', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }, { table: 'users', field: 'teacher_email', optional: true }, { table: 'discussions', field: 'parent_id', optional: true, self: true }] },
-        { name: 'notifications', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'users', field: 'user_email' }] },
         { name: 'broadcasts', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id', optional: true }, { table: 'users', field: 'teacher_email', optional: true }] },
-        { name: 'planner', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'users', field: 'user_email' }] },
-        { name: 'certificates', onConflict: 'id', orderBy: 'issued_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }] },
-        { name: 'study_sessions', onConflict: 'id', orderBy: 'started_at', dependencies: [{ table: 'users', field: 'user_email' }, { table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'violations', onConflict: 'id', orderBy: 'timestamp', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }, { table: ['assignments', 'quizzes'], field: 'assessment_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
-        { name: 'invites', onConflict: 'token', orderBy: 'token', dependencies: [{ table: 'users', field: 'created_by' }] },
-        { name: 'support_tickets', onConflict: 'id', orderBy: 'created_at', dependencies: [] },
-        { name: 'maintenance', onConflict: 'id', orderBy: 'id', dependencies: [] }
+        { name: 'certificates', onConflict: 'id', orderBy: 'issued_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }] },
+        { name: 'discussions', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }, { table: 'users', field: 'teacher_email', optional: true }, { table: 'discussions', field: 'parent_id', optional: true, self: true }] }
     ]
 };
 
@@ -467,6 +468,8 @@ function filterUsers() { renderUsers(); }
 window.filterUsers = filterUsers;
 window.previewCleanup = previewCleanup;
 window.executeCleanup = executeCleanup;
+window.executePurge = executePurge;
+window.saveAutoTask = saveAutoTask;
 window.exportBackup = exportBackup;
 window.importBackup = importBackup;
 
@@ -1795,6 +1798,20 @@ async function exportBackup() {
         }
     }
 
+    // Align with strictly requested format and table order
+    const requestedOrder = [
+        'invites', 'courses', 'planner', 'notifications', 'support_tickets',
+        'maintenance', 'users', 'assignments', 'materials', 'attendance',
+        'study_sessions', 'submissions', 'quiz_submissions', 'broadcasts',
+        'violations', 'certificates', 'enrollments', 'discussions', 'lessons',
+        'quizzes', 'topics'
+    ];
+    const orderedTables = {};
+    requestedOrder.forEach(tableName => {
+        orderedTables[tableName] = backupData.tables[tableName] || [];
+    });
+    backupData.tables = orderedTables;
+
     // Perform Integrity Audit
     UI.showLoading('mgt-area', 'Auditing data integrity...');
     const issues = BackupAuditManager.audit(backupData);
@@ -1932,7 +1949,7 @@ async function importBackup(event) {
           const hasSelfDep = config.dependencies?.some(d => d.self);
 
           const processBatch = async (batchRecords) => {
-              const batch = batchRecords.map(r => SupabaseDB._sanitizePayload(r));
+              const batch = batchRecords.map(r => SupabaseDB._sanitizePayload(r, table));
               const { error } = await supabaseClient
                   .from(table)
                   .upsert(batch, { onConflict: config.onConflict });
