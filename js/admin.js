@@ -456,7 +456,7 @@ async function approveCert(certId) {
 }
 
 async function rejectCert(certId) {
-    const reason = await UI.requestInput('Rejection Reason', 'Please provide a reason for rejection:');
+    const reason = await UI.prompt('Please provide a reason for rejection:', 'Course requirements not fully met', 'Rejection Reason');
     if (reason === null) return;
     try {
         await SupabaseDB.updateCertificateStatus(certId, 'rejected', { reason });
@@ -473,7 +473,9 @@ async function consolidateAndApproveCert(certId, studentEmail) {
     try {
         const student = await SupabaseDB.getUser(studentEmail);
         const enrollments = await SupabaseDB.getEnrollments(studentEmail);
-        const courses = enrollments.data.map(e => e.courses);
+        const courses = enrollments.data.map(e => e.courses).filter(Boolean);
+
+        if (!student) throw new Error('Student data not found');
 
         const verificationId = crypto.randomUUID().slice(0, 13).toUpperCase();
         const issueDate = new Date().toISOString();
@@ -512,7 +514,7 @@ async function consolidateAndApproveCert(certId, studentEmail) {
         renderReports('certificates');
     } catch (e) {
         console.error('Consolidation error:', e);
-        UI.showNotification('Error: ' + e.message, 'error');
+        UI.showNotification('Error: ' + (e.message || 'PDF Generation failed'), 'error');
     }
 }
 
@@ -1300,10 +1302,10 @@ async function renderReports(tab = 'submissions', page = 1) {
                 </tr>
             `);
         } else if (tab === 'certificates') {
-            res = await SupabaseDB.getCertificates(null, { page, pageSize });
+            res = await SupabaseDB.getCertificates(null, null, { page, pageSize });
             if (renderId !== window.currentRenderId) return;
             UI.renderTable('reportsTable', ['User', 'Course/Type', 'Status', 'Info', 'Action'], res.data, (c) => {
-                const isPending = c.status === 'pending_approval' || c.status === 'requested';
+                const canApprove = c.status === 'pending_approval';
                 const typeLabel = c.type === 'consolidated' ? '<span class="badge-active">CONSOLIDATED</span>' : '<span class="badge-inactive">SINGLE</span>';
                 return `
                 <tr>
@@ -1313,11 +1315,11 @@ async function renderReports(tab = 'submissions', page = 1) {
                         <div class="tiny">${typeLabel}</div>
                     </td>
                     <td><span class="badge-${c.status === 'approved' ? 'active' : (c.status === 'rejected' ? 'inactive' : 'warn')}">${c.status.toUpperCase()}</span></td>
-                    <td><div class="tiny text-muted">${escapeHtml(c.request_reason || 'Manual Issuance')}</div></td>
+                    <td><div class="tiny text-muted">${escapeHtml(c.request_reason || 'Teacher Issued')}</div></td>
                     <td>
                         <div class="flex gap-5">
                             <button class="button secondary tiny w-auto" onclick="UI.viewFile('${escapeAttr(c.certificate_url)}', 'Certificate')">View</button>
-                            ${isPending ? `
+                            ${canApprove ? `
                                 <button class="button small tiny w-auto" onclick="approveCert('${escapeAttr(c.id)}')">Approve</button>
                                 <button class="button small tiny w-auto" onclick="consolidateAndApproveCert('${escapeAttr(c.id)}', '${escapeAttr(c.student_email)}')">Consolidate & Approve</button>
                                 <button class="button danger tiny w-auto" onclick="rejectCert('${escapeAttr(c.id)}')">Reject</button>
