@@ -763,10 +763,11 @@ async function issueCert(studentEmail) {
       student_email: studentEmail,
       course_id: courseId,
       certificate_url: certUrl,
-      issued_at: issueDate
+      issued_at: issueDate,
+      status: 'pending_approval'
     });
 
-    UI.showNotification('Certificate issued successfully!', 'success');
+    UI.showNotification('Certificate issued and sent to admin for approval.', 'success');
     renderStudents();
     const area = document.getElementById('certFormArea');
     if (area) area.style.display = 'none';

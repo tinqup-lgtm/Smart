@@ -1317,9 +1317,74 @@ class SupabaseDB {
 
     // Certificate operations
     static async issueCertificate(certificate) {
-        const data = await this._upsert('certificates', certificate);
+        const user = await SessionManager.getCurrentUser();
+        const payload = {
+            ...certificate,
+            teacher_email: user.email,
+            status: certificate.status || 'pending_approval',
+            type: certificate.type || 'single'
+        };
+        const data = await this._upsert('certificates', payload);
+
+        // Notify admin for approval
+        if (payload.status === 'pending_approval') {
+            await this.createNotification({
+                user_email: 'admin@smartlms.edu',
+                title: 'Certificate Approval Required',
+                message: `Teacher ${user.full_name} issued a certificate to ${certificate.student_email}. Approval needed.`,
+                type: 'cert_issued'
+            });
+        }
+
         _cache.invalidate('certificates');
         return data?.[0];
+    }
+
+    static async requestCertificate(studentEmail, courseId, reason) {
+        const payload = {
+            student_email: studentEmail,
+            course_id: courseId,
+            request_reason: reason,
+            status: 'requested'
+        };
+        const data = await this._upsert('certificates', payload);
+
+        // Notify admin
+        await this.createNotification({
+            user_email: 'admin@smartlms.edu',
+            title: 'New Certificate Request',
+            message: `Student ${studentEmail} requested a certificate for a course.`,
+            type: 'cert_requested'
+        });
+
+        _cache.invalidate('certificates');
+        return data?.[0];
+    }
+
+    static async updateCertificateStatus(certId, status, metadata = {}) {
+        const { data: cert } = await supabaseClient.from('certificates').select('*').eq('id', certId).single();
+        const data = await this._update('certificates', certId, {
+            status,
+            metadata: { ...(cert?.metadata || {}), ...metadata },
+            updated_at: new Date().toISOString()
+        });
+
+        // Notify student
+        let title, type;
+        if (status === 'approved') { title = 'Certificate Approved'; type = 'cert_approved'; }
+        else if (status === 'rejected') { title = 'Certificate Request Rejected'; type = 'cert_rejected'; }
+
+        if (title && cert) {
+            await this.createNotification({
+                user_email: cert.student_email,
+                title,
+                message: status === 'approved' ? 'Your certificate is ready for download.' : `Your certificate request was rejected. Reason: ${metadata.reason || 'None provided'}`,
+                type
+            });
+        }
+
+        _cache.invalidate('certificates');
+        return data;
     }
 
     static async getCertificates(studentEmail = null, options = {}) {
@@ -1327,7 +1392,7 @@ class SupabaseDB {
             let query = supabaseClient.from('certificates').select('*, courses(*)', { count: 'exact' });
             if (studentEmail) query = query.eq('student_email', studentEmail);
 
-            return this._getPaginated(query.order('issued_at', { ascending: false }), options);
+            return this._getPaginated(query.order('updated_at', { ascending: false }), options);
         });
     }
 

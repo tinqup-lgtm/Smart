@@ -1263,6 +1263,54 @@ window.renderCalendar = renderCalendar;
 window.renderMaterials = renderMaterials;
 window.renderDiscussions = renderDiscussions;
 window.renderCertificates = renderCertificates;
+
+async function showCertRequestModal() {
+  const modal = document.getElementById('certRequestModal');
+  const select = document.getElementById('requestCourseId');
+  if(!modal || !select) return;
+
+  try {
+    const user = await SessionManager.getCurrentUser();
+    const enrollments = await SupabaseDB.getEnrollments(user.email);
+
+    select.innerHTML = enrollments.data.map(e => `
+      <option value="${escapeAttr(e.course_id)}">${escapeHtml(e.courses.title)}</option>
+    `).join('') || '<option value="" disabled>No enrolled courses</option>';
+
+    modal.classList.remove('hidden');
+  } catch (e) {
+    console.error('Show cert modal error:', e);
+    UI.showNotification('Failed to load courses', 'error');
+  }
+}
+
+async function submitCertRequest() {
+  const btn = document.getElementById('submitRequestBtn');
+  const courseId = document.getElementById('requestCourseId').value;
+  const reason = document.getElementById('requestReason').value;
+
+  if(!courseId) {
+    UI.showNotification('Please select a course', 'warn');
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = 'Submitting...';
+  try {
+    const user = await SessionManager.getCurrentUser();
+    await SupabaseDB.requestCertificate(user.email, courseId, reason);
+    UI.showNotification('Certificate request submitted successfully!', 'success');
+    document.getElementById('certRequestModal').classList.add('hidden');
+    renderCertificates();
+  } catch (e) {
+    console.error('Cert request error:', e);
+    UI.showNotification('Failed to submit request', 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Submit Request';
+  }
+}
+
+window.showCertRequestModal = showCertRequestModal;
+window.submitCertRequest = submitCertRequest;
 window.renderPlanner = renderPlanner;
 window.renderLiveClasses = renderLiveClasses;
 window.renderSettings = renderSettings;
@@ -1297,16 +1345,49 @@ async function renderCertificates() {
     const certs = certsRes.data || [];
 
   container.innerHTML = `
-    <h2 class="m-0">My Certificates</h2>
+    <div class="flex-between">
+      <h2 class="m-0">My Certificates</h2>
+      <button class="button small w-auto" onclick="showCertRequestModal()">Request Certificate</button>
+    </div>
     <div class="grid mt-20">
-      ${certs.map(c => `
-        <div class="card flex-center flex-column">
-          <div style="font-size:40px">📜</div>
-          <h3 class="m-0 mt-10">${escapeHtml(c.courses.title)}</h3>
-          <p class="small mt-5">Issued on: ${new Date(c.issued_at).toLocaleDateString()}</p>
-          <button class="button w-auto px-30 mt-15" onclick="UI.viewFile('${escapeAttr(c.certificate_url)}', 'Certificate - ${escapeAttr(c.courses.title)}')">View Certificate</button>
+      ${certs.map(c => {
+        const isApproved = c.status === 'approved';
+        const title = c.courses?.title || (c.type === 'consolidated' ? 'Consolidated Certificate' : 'Course Certificate');
+        return `
+        <div class="card flex-center flex-column relative">
+          <div style="font-size:40px">${isApproved ? '🎓' : '⏳'}</div>
+          <h3 class="m-0 mt-10 text-center">${escapeHtml(title)}</h3>
+          <p class="small mt-5">Status: <span class="badge-${c.status === 'approved' ? 'active' : (c.status === 'rejected' ? 'inactive' : 'warn')}">${c.status.toUpperCase()}</span></p>
+          ${c.status === 'rejected' ? `<p class="tiny danger-text mt-5">Reason: ${escapeHtml(c.metadata?.reason || 'N/A')}</p>` : ''}
+          <p class="tiny mt-5">Last Updated: ${new Date(c.updated_at).toLocaleDateString()}</p>
+
+          <div class="flex gap-10 mt-15">
+            ${isApproved ? `<button class="button w-auto px-20" onclick="UI.viewFile('${escapeAttr(c.certificate_url)}', 'Certificate - ${escapeAttr(title)}')">Download</button>` : ''}
+            <button class="button secondary small w-auto" onclick="UI.showNotification('Status: ${c.status.toUpperCase()}', 'info')">Details</button>
+          </div>
         </div>
-      `).join('') || '<div class="empty">No certificates earned yet. Finish a course to get one!</div>'}
+      `}).join('') || '<div class="empty">No certificates earned yet. Finish a course to get one!</div>'}
+    </div>
+
+    <!-- Request Modal -->
+    <div id="certRequestModal" class="modal-overlay hidden">
+      <div class="modal-content card">
+        <h3>Request Course Certificate</h3>
+        <p class="small text-muted mb-15">Request a certificate for a course you have completed.</p>
+
+        <label>Select Course</label>
+        <select id="requestCourseId" class="mb-15">
+          <!-- Populated dynamically -->
+        </select>
+
+        <label>Reason / Additional Info</label>
+        <textarea id="requestReason" placeholder="e.g. Completed all lessons and passed final quiz..." rows="3"></textarea>
+
+        <div class="flex gap-10 mt-20">
+          <button class="button w-auto px-30" id="submitRequestBtn" onclick="submitCertRequest()">Submit Request</button>
+          <button class="button secondary w-auto px-30" onclick="document.getElementById('certRequestModal').classList.add('hidden')">Cancel</button>
+        </div>
+      </div>
     </div>
   `;
   } catch (e) {

@@ -259,7 +259,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   title VARCHAR(255) NOT NULL,
   message TEXT NOT NULL,
   link TEXT,
-  type VARCHAR(50) DEFAULT 'system' CHECK (type IN ('system', 'broadcast', 'assignment_published', 'quiz_published', 'submission_received', 'grade_posted', 'live_class', 'teacher_left', 'class_ended', 'reset_requested', 'password_updated')),
+  type VARCHAR(50) DEFAULT 'system' CHECK (type IN ('system', 'broadcast', 'assignment_published', 'quiz_published', 'submission_received', 'grade_posted', 'live_class', 'teacher_left', 'class_ended', 'reset_requested', 'password_updated', 'cert_requested', 'cert_issued', 'cert_approved', 'cert_rejected')),
   is_read BOOLEAN DEFAULT FALSE,
   expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '90 days'),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -311,6 +311,9 @@ CREATE TABLE IF NOT EXISTS certificates (
   issued_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   certificate_url TEXT,
+  status VARCHAR(50) DEFAULT 'pending_approval' CHECK (status IN ('requested', 'pending_approval', 'approved', 'rejected')),
+  type VARCHAR(50) DEFAULT 'single' CHECK (type IN ('single', 'consolidated')),
+  request_reason TEXT,
   metadata JSONB DEFAULT '{}'::jsonb
 );
 
@@ -551,7 +554,7 @@ BEGIN
     ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
     BEGIN
         ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
-        ALTER TABLE notifications ADD CONSTRAINT notifications_type_check CHECK (type IN ('system', 'broadcast', 'assignment_published', 'quiz_published', 'submission_received', 'grade_posted', 'live_class', 'teacher_left', 'class_ended', 'reset_requested', 'password_updated'));
+        ALTER TABLE notifications ADD CONSTRAINT notifications_type_check CHECK (type IN ('system', 'broadcast', 'assignment_published', 'quiz_published', 'submission_received', 'grade_posted', 'live_class', 'teacher_left', 'class_ended', 'reset_requested', 'password_updated', 'cert_requested', 'cert_issued', 'cert_approved', 'cert_rejected'));
     EXCEPTION WHEN OTHERS THEN NULL; END;
 
     -- broadcasts
@@ -568,6 +571,18 @@ BEGIN
     -- certificates
     ALTER TABLE certificates ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
     ALTER TABLE certificates ADD COLUMN IF NOT EXISTS teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL;
+    ALTER TABLE certificates ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending_approval';
+    ALTER TABLE certificates ADD COLUMN IF NOT EXISTS type VARCHAR(50) DEFAULT 'single';
+    ALTER TABLE certificates ADD COLUMN IF NOT EXISTS request_reason TEXT;
+    ALTER TABLE certificates ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+    BEGIN
+        ALTER TABLE certificates DROP CONSTRAINT IF EXISTS certificates_status_check;
+        ALTER TABLE certificates ADD CONSTRAINT certificates_status_check CHECK (status IN ('requested', 'pending_approval', 'approved', 'rejected'));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+    BEGIN
+        ALTER TABLE certificates DROP CONSTRAINT IF EXISTS certificates_type_check;
+        ALTER TABLE certificates ADD CONSTRAINT certificates_type_check CHECK (type IN ('single', 'consolidated'));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
 
     -- study_sessions
     ALTER TABLE study_sessions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
@@ -2478,13 +2493,21 @@ DROP POLICY IF EXISTS "Certificates: User Access" ON certificates;
 CREATE POLICY "Certificates: User Access" ON certificates FOR SELECT USING (
   is_admin() OR
   teacher_email = get_auth_email() OR
-  (student_email = get_auth_email() AND EXISTS (SELECT 1 FROM courses WHERE id = certificates.course_id AND status = 'published'))
+  student_email = get_auth_email()
 );
 DROP POLICY IF EXISTS "Certificates: Admin Manage" ON certificates;
 CREATE POLICY "Certificates: Admin Manage" ON certificates FOR ALL USING (is_admin());
+DROP POLICY IF EXISTS "Certificates: Teacher Issue" ON certificates;
+CREATE POLICY "Certificates: Teacher Issue" ON certificates FOR INSERT WITH CHECK (
+  is_teacher() AND teacher_email = get_auth_email()
+);
+DROP POLICY IF EXISTS "Certificates: Student Request" ON certificates;
+CREATE POLICY "Certificates: Student Request" ON certificates FOR INSERT WITH CHECK (
+  student_email = get_auth_email() AND status = 'requested'
+);
 DROP POLICY IF EXISTS "Certificates: Teachers Delete" ON certificates;
 CREATE POLICY "Certificates: Teachers Delete" ON certificates FOR DELETE USING (
-  is_teacher() AND EXISTS (SELECT 1 FROM courses WHERE id = certificates.course_id AND teacher_email = get_auth_email())
+  is_teacher() AND teacher_email = get_auth_email()
 );
 
 -- 21. Invites Table
