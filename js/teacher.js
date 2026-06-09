@@ -3213,6 +3213,8 @@ window.updateQuizTotalPoints = updateQuizTotalPoints;
 window.renderQuizOptions = renderQuizOptions;
 window.toggleQuizOptions = toggleQuizOptions;
 window.shuffleQuizQuestions = shuffleQuizQuestions;
+window.addQuestionField = addQuestionField;
+window.updateAssignmentTotalPoints = updateAssignmentTotalPoints;
 
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await initDashboard('teacher');
