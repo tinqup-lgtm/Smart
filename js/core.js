@@ -1589,42 +1589,40 @@ const CertificateGenerator = {
         doc.setFont('helvetica', 'normal');
         doc.text('Authorized Official', width - 70, sigY + 13, { align: 'center' });
 
-        // Official Stamp / Seal Section
-        const stampX = width/2;
-        const stampY = 178;
+        // Official Stamp / Seal Section - Positioned between labels
+        const midY = 182;
+        const centerX = width / 2;
+
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(180, 180, 180);
+        doc.text('OFFICIAL STAMP', centerX - 45, midY, { align: 'center' });
+
+        // Actual Stamp Graphic (Circular Seal)
         doc.setDrawColor(91, 46, 166);
+        doc.setLineWidth(0.8);
+        doc.circle(centerX, midY, 12);
         doc.setLineWidth(0.2);
-        doc.rect(stampX - 25, 165, 50, 28); // Stamp box
+        doc.circle(centerX, midY, 11);
 
-        doc.setFontSize(8);
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(150, 150, 150);
-        doc.text('OFFICIAL STAMP', stampX, 171, { align: 'center' });
-
-        // Actual Stamp Graphic
-        doc.setDrawColor(91, 46, 166);
-        doc.setLineWidth(0.5);
-        doc.circle(stampX, 178, 8);
-        doc.circle(stampX, 178, 7.5);
-        doc.setFontSize(4);
-        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(5);
         doc.setTextColor(91, 46, 166);
-        doc.text('SMARTLMS', stampX, 177, { align: 'center' });
-        doc.text('OFFICIAL', stampX, 179, { align: 'center' });
-        doc.text('SEAL', stampX, 181, { align: 'center' });
+        doc.text('SMARTLMS', centerX, midY - 3, { align: 'center' });
+        doc.setFontSize(8);
+        doc.text('SEAL', centerX, midY + 2, { align: 'center' });
+        doc.setFontSize(4);
+        doc.text('OFFICIAL', centerX, midY + 6, { align: 'center' });
 
         doc.setFontSize(10);
-        doc.setTextColor(0, 0, 0);
-        doc.text('VERIFIED', stampX, 190, { align: 'center' });
+        doc.setTextColor(180, 180, 180);
+        doc.text('VERIFIED', centerX + 45, midY, { align: 'center' });
 
-        // Prominent ID and Date
-        doc.setFontSize(11);
+        // Prominent ID and Date - refined placement
+        doc.setFontSize(9);
         doc.setFont('helvetica', 'bold');
-        doc.setTextColor(0, 0, 0);
-        doc.text(`Certificate ID: ${verificationId}`, width / 2, 202, { align: 'center' });
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(10);
-        doc.text(`Issue Date: ${new Date(issueDate).toLocaleDateString()}`, width / 2, 208, { align: 'center' });
+        doc.setTextColor(50, 50, 50);
+        doc.text(`Certificate ID: ${verificationId}`, 15, height - 12);
+        doc.text(`Issue Date: ${new Date(issueDate).toLocaleDateString()}`, width - 15, height - 12, { align: 'right' });
 
         // QR Code
         if (typeof QRCode !== 'undefined' && options.verificationUrl) {
