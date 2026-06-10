@@ -447,10 +447,45 @@ window.renderReports = renderReports;
 async function approveCert(certId) {
     if (!await UI.confirm('Are you sure you want to approve this certificate?')) return;
     try {
-        await SupabaseDB.updateCertificateStatus(certId, 'approved');
-        UI.showNotification('Certificate approved!', 'success');
+        const { data: cert } = await supabaseClient.from('certificates').select('*, courses(title), users!student_email(full_name)').eq('id', certId).single();
+        if (!cert) throw new Error('Certificate not found');
+
+        const verificationId = cert.metadata?.verification_id || crypto.randomUUID().slice(0, 13).toUpperCase();
+        const issueDate = new Date().toISOString();
+
+        const doc = await CertificateGenerator.generatePDF(
+            cert.users?.full_name || cert.student_email,
+            cert.courses?.title || 'Course Certificate',
+            issueDate,
+            verificationId,
+            { verificationUrl: `https://smartlms.edu/verify/${verificationId}` }
+        );
+
+        if (!doc) throw new Error('PDF Generation failed');
+
+        const pdfBlob = doc.output('blob');
+        const path = `certificates/${cert.student_email}/${cert.course_id}_${TimerManager.getTime()}.pdf`;
+        await SupabaseDB.uploadFile('certificates', path, pdfBlob);
+        const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
+
+        await SupabaseDB.updateCertificate(certId, {
+            certificate_url: certUrl,
+            status: 'approved',
+            metadata: { ...(cert.metadata || {}), verification_id: verificationId }
+        });
+
+        await SupabaseDB.createNotification(
+            cert.student_email,
+            'Certificate Approved',
+            'Your certificate is ready for download.',
+            null,
+            'cert_approved'
+        );
+
+        UI.showNotification('Certificate approved and PDF generated!', 'success');
         renderReports('certificates');
     } catch (e) {
+        console.error('Approval error:', e);
         UI.showNotification('Error: ' + e.message, 'error');
     }
 }
@@ -459,7 +494,19 @@ async function rejectCert(certId) {
     const reason = await UI.prompt('Please provide a reason for rejection:', 'Course requirements not fully met', 'Rejection Reason');
     if (reason === null) return;
     try {
-        await SupabaseDB.updateCertificateStatus(certId, 'rejected', { reason });
+        await SupabaseDB.updateCertificate(certId, { status: 'rejected', metadata: { reason } });
+
+        const { data: cert } = await supabaseClient.from('certificates').select('student_email').eq('id', certId).single();
+        if (cert) {
+            await SupabaseDB.createNotification(
+                cert.student_email,
+                'Certificate Request Rejected',
+                `Your certificate request was rejected. Reason: ${reason}`,
+                null,
+                'cert_rejected'
+            );
+        }
+
         UI.showNotification('Certificate rejected', 'info');
         renderReports('certificates');
     } catch (e) {
@@ -485,7 +532,7 @@ async function consolidateAndApproveCert(certId, studentEmail) {
             'All Enrolled Courses',
             issueDate,
             verificationId,
-            { type: 'consolidated', courses: courses }
+            { type: 'consolidated', courses: courses, verificationUrl: `https://smartlms.edu/verify/${verificationId}` }
         );
 
         if (!doc) throw new Error('PDF Generation failed');
@@ -495,12 +542,12 @@ async function consolidateAndApproveCert(certId, studentEmail) {
         await SupabaseDB.uploadFile('certificates', path, pdfBlob);
         const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
 
-        await SupabaseDB._update('certificates', {
+        await SupabaseDB.updateCertificate(certId, {
             certificate_url: certUrl,
             status: 'approved',
             type: 'consolidated',
-            updated_at: issueDate
-        }, { id: certId });
+            metadata: { verification_id: verificationId }
+        });
 
         await SupabaseDB.createNotification(
             studentEmail,
@@ -518,6 +565,68 @@ async function consolidateAndApproveCert(certId, studentEmail) {
     }
 }
 
+async function deleteCert(certId) {
+    if (!await UI.confirm('Are you sure you want to delete this certificate record and its file? This action cannot be undone.')) return;
+    try {
+        await SupabaseDB.deleteCertificate(certId);
+        UI.showNotification('Certificate deleted successfully.', 'info');
+        renderReports('certificates');
+    } catch (e) {
+        UI.showNotification('Error deleting certificate: ' + e.message, 'error');
+    }
+}
+
+async function editCert(certId) {
+    const { data: cert } = await supabaseClient.from('certificates').select('*, users!student_email(full_name)').eq('id', certId).single();
+    if (!cert) return;
+    const currentTitle = cert.metadata?.course_title || cert.courses?.title || (cert.type === 'consolidated' ? 'All Enrolled Courses' : '');
+
+    const newTitle = await UI.prompt('Enter new course title for this certificate:', currentTitle, 'Edit Certificate');
+    if (newTitle === null || newTitle === currentTitle) return;
+
+    try {
+        UI.showLoading('pageContent', 'Regenerating Certificate PDF...');
+        const verificationId = cert.metadata?.verification_id || cert.id.slice(0, 13).toUpperCase();
+        const issueDate = cert.issued_at || new Date().toISOString();
+
+        const doc = await CertificateGenerator.generatePDF(
+            cert.users?.full_name || cert.student_email,
+            newTitle,
+            issueDate,
+            verificationId,
+            {
+                type: cert.type,
+                courses: cert.type === 'consolidated' ? (await SupabaseDB.getEnrollments(cert.student_email)).data.map(e => e.courses).filter(Boolean) : null,
+                verificationUrl: `https://smartlms.edu/verify/${verificationId}`
+            }
+        );
+
+        if (!doc) throw new Error('PDF Generation failed');
+
+        const pdfBlob = doc.output('blob');
+        const path = `certificates/${cert.student_email}/${cert.course_id || 'consolidated'}_${TimerManager.getTime()}.pdf`;
+
+        if (cert.certificate_url) {
+            await SupabaseDB.deleteFileByUrl(cert.certificate_url);
+        }
+
+        await SupabaseDB.uploadFile('certificates', path, pdfBlob);
+        const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
+
+        await SupabaseDB.updateCertificate(certId, {
+            certificate_url: certUrl,
+            metadata: { ...(cert.metadata || {}), course_title: newTitle, verification_id: verificationId }
+        });
+
+        UI.showNotification('Certificate updated and PDF regenerated!', 'success');
+        renderReports('certificates');
+    } catch (e) {
+        console.error('Edit error:', e);
+        UI.showNotification('Error updating certificate: ' + e.message, 'error');
+        renderReports('certificates');
+    }
+}
+
 window.approveCert = approveCert;
 window.rejectCert = rejectCert;
 window.consolidateAndApproveCert = consolidateAndApproveCert;
@@ -528,6 +637,8 @@ window.renderSettings = renderSettings;
 window.renderSystem = renderSystem;
 window.editUser = editUser;
 window.toggleUserStatus = toggleUserStatus;
+window.editCert = editCert;
+window.deleteCert = deleteCert;
 window.deleteUserByEmail = deleteUserByEmail;
 window.lockUser = lockUser;
 window.unlockUser = unlockUser;
@@ -1307,23 +1418,26 @@ async function renderReports(tab = 'submissions', page = 1) {
             UI.renderTable('reportsTable', ['User', 'Course/Type', 'Status', 'Info', 'Action'], res.data, (c) => {
                 const canApprove = c.status === 'pending_approval';
                 const typeLabel = c.type === 'consolidated' ? '<span class="badge-active">CONSOLIDATED</span>' : '<span class="badge-inactive">SINGLE</span>';
+                const displayTitle = c.metadata?.course_title || c.courses?.title || 'Consolidated';
                 return `
                 <tr>
                     <td><div class="small bold">${escapeHtml(c.student_email)}</div></td>
                     <td>
-                        <div class="small">${escapeHtml(c.courses?.title || 'Consolidated')}</div>
+                        <div class="small">${escapeHtml(displayTitle)}</div>
                         <div class="tiny">${typeLabel}</div>
                     </td>
                     <td><span class="badge-${c.status === 'approved' ? 'active' : (c.status === 'rejected' ? 'inactive' : 'warn')}">${c.status.toUpperCase()}</span></td>
                     <td><div class="tiny text-muted">${escapeHtml(c.request_reason || 'Teacher Issued')}</div></td>
                     <td>
-                        <div class="flex gap-5">
+                        <div class="flex gap-5 flex-wrap">
                             <button class="button secondary tiny w-auto" onclick="UI.viewFile('${escapeAttr(c.certificate_url)}', 'Certificate')">View</button>
                             ${canApprove ? `
-                                <button class="button small tiny w-auto" onclick="approveCert('${escapeAttr(c.id)}')">Approve</button>
-                                <button class="button small tiny w-auto" onclick="consolidateAndApproveCert('${escapeAttr(c.id)}', '${escapeAttr(c.student_email)}')">Consolidate & Approve</button>
+                                <button class="button small tiny w-auto" style="background:var(--ok)" onclick="approveCert('${escapeAttr(c.id)}')">Approve</button>
+                                <button class="button small tiny w-auto" style="background:var(--purple)" onclick="consolidateAndApproveCert('${escapeAttr(c.id)}', '${escapeAttr(c.student_email)}')">Consolidate & Approve</button>
                                 <button class="button danger tiny w-auto" onclick="rejectCert('${escapeAttr(c.id)}')">Reject</button>
                             ` : ''}
+                            <button class="button secondary tiny w-auto" onclick="editCert('${escapeAttr(c.id)}')">Edit</button>
+                            <button class="button danger tiny w-auto" onclick="deleteCert('${escapeAttr(c.id)}')">Delete</button>
                         </div>
                     </td>
                 </tr>

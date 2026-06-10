@@ -1419,6 +1419,26 @@ class SupabaseDB {
         return data;
     }
 
+    static async updateCertificate(certId, payload) {
+        const data = await this._update('certificates', {
+            ...payload,
+            updated_at: new Date().toISOString()
+        }, { id: certId });
+        _cache.invalidate('certificates');
+        return data;
+    }
+
+    static async deleteCertificate(certId) {
+        const { data: cert } = await supabaseClient.from('certificates').select('*').eq('id', certId).single();
+        if (cert && cert.certificate_url) {
+            await this.deleteFileByUrl(cert.certificate_url);
+        }
+        const { error } = await supabaseClient.from('certificates').delete().eq('id', certId);
+        if (error) throw error;
+        _cache.invalidate('certificates');
+        return true;
+    }
+
     static async getCertificates(studentEmail = null, teacherEmail = null, options = {}) {
         return this._request(async () => {
             let query = supabaseClient.from('certificates').select('*, courses(*)', { count: 'exact' });
