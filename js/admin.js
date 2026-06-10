@@ -9,10 +9,10 @@ const BACKUP_CONFIG = {
     // Tables are ordered here by dependency to ensure safe restoration.
     // Re-ordering for the requested export format is handled in exportBackup().
     tables: [
-        { name: 'users', onConflict: 'email', orderBy: 'email', dependencies: [] },
+        { name: 'users', onConflict: 'id', orderBy: 'email', dependencies: [] },
         { name: 'maintenance', onConflict: 'id', orderBy: 'id', dependencies: [] },
         { name: 'support_tickets', onConflict: 'id', orderBy: 'created_at', dependencies: [] },
-        { name: 'invites', onConflict: 'token', orderBy: 'token', dependencies: [{ table: 'users', field: 'created_by' }] },
+        { name: 'invites', onConflict: 'id', orderBy: 'token', dependencies: [{ table: 'users', field: 'created_by' }] },
         { name: 'courses', onConflict: 'id', orderBy: 'id', dependencies: [{ table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'planner', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'users', field: 'user_email' }] },
         { name: 'notifications', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'users', field: 'user_email' }] },
