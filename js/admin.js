@@ -447,10 +447,36 @@ window.renderReports = renderReports;
 async function approveCert(certId) {
     if (!await UI.confirm('Are you sure you want to approve this certificate?')) return;
     try {
-        await SupabaseDB.updateCertificateStatus(certId, 'approved');
-        UI.showNotification('Certificate approved!', 'success');
+        const { data: cert } = await supabaseClient.from('certificates').select('*, courses(title), users!student_email(full_name)').eq('id', certId).single();
+        if (!cert) throw new Error('Certificate not found');
+
+        const verificationId = cert.metadata?.verification_id || crypto.randomUUID().slice(0, 13).toUpperCase();
+        const issueDate = new Date().toISOString();
+
+        const doc = await CertificateGenerator.generatePDF(
+            cert.users?.full_name || cert.student_email,
+            cert.courses?.title || 'Course Certificate',
+            issueDate,
+            verificationId,
+            { verificationUrl: `https://smartlms.edu/verify/${verificationId}` }
+        );
+
+        if (!doc) throw new Error('PDF Generation failed');
+
+        const pdfBlob = doc.output('blob');
+        const path = `certificates/${cert.student_email}/${cert.course_id}_${TimerManager.getTime()}.pdf`;
+        await SupabaseDB.uploadFile('certificates', path, pdfBlob);
+        const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
+
+        await SupabaseDB.updateCertificateStatus(certId, 'approved', {
+            certificate_url: certUrl,
+            verification_id: verificationId
+        });
+
+        UI.showNotification('Certificate approved and PDF generated!', 'success');
         renderReports('certificates');
     } catch (e) {
+        console.error('Approval error:', e);
         UI.showNotification('Error: ' + e.message, 'error');
     }
 }
