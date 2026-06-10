@@ -1500,48 +1500,62 @@ const CertificateGenerator = {
         doc.setFillColor(255, 255, 255);
         doc.rect(0, 0, width, height, 'F');
 
-        // Textures
-        doc.setDrawColor(245, 245, 245);
+        // Sophisticated Background Pattern
+        doc.setDrawColor(240, 240, 240);
         doc.setLineWidth(0.1);
-        for(let i=0; i<width; i+=10) {
-            doc.line(i, 0, i, height);
+        for (let i = 0; i < width + height; i += 15) {
+            doc.line(0, i, i, 0);
         }
 
         // Refined Border System
         doc.setDrawColor(218, 165, 32); // Golden
-        doc.setLineWidth(1.5);
+        doc.setLineWidth(1.2);
         doc.rect(5, 5, width - 10, height - 10);
         doc.setLineWidth(0.5);
-        doc.rect(6.5, 6.5, width - 13, height - 13);
+        doc.rect(7, 7, width - 14, height - 14);
+
+        // Decorative Corners
+        doc.setFillColor(218, 165, 32);
+        const cs = 12; // corner size
+        doc.rect(5, 5, cs, cs, 'F');
+        doc.rect(width - 5 - cs, 5, cs, cs, 'F');
+        doc.rect(5, height - 5 - cs, cs, cs, 'F');
+        doc.rect(width - 5 - cs, height - 5 - cs, cs, cs, 'F');
+
+        doc.setFillColor(255, 255, 255);
+        doc.circle(5 + cs/2, 5 + cs/2, 2, 'F');
+        doc.circle(width - 5 - cs/2, 5 + cs/2, 2, 'F');
+        doc.circle(5 + cs/2, height - 5 - cs/2, 2, 'F');
+        doc.circle(width - 5 - cs/2, height - 5 - cs/2, 2, 'F');
 
         doc.setDrawColor(91, 46, 166); // Primary Brand
         doc.setLineWidth(0.8);
-        doc.rect(10, 10, width - 20, height - 20);
+        doc.rect(12, 12, width - 24, height - 24);
 
         // Header
         doc.setTextColor(91, 46, 166);
-        doc.setFontSize(48);
+        doc.setFontSize(54);
         doc.setFont('helvetica', 'bold');
-        doc.text('CERTIFICATE', width / 2, 45, { align: 'center', charSpace: 2 });
+        doc.text('CERTIFICATE', width / 2, 45, { align: 'center', charSpace: 4 });
 
-        doc.setFontSize(18);
+        doc.setFontSize(20);
         doc.setFont('helvetica', 'normal');
-        doc.setTextColor(100, 100, 100);
-        doc.text('OF COMPLETION', width / 2, 55, { align: 'center', charSpace: 4 });
+        doc.setTextColor(120, 120, 120);
+        doc.text('OF COMPLETION', width / 2, 58, { align: 'center', charSpace: 8 });
 
         // Body
-        doc.setTextColor(34, 34, 34);
+        doc.setTextColor(60, 60, 60);
         doc.setFontSize(16);
-        doc.text('THIS IS TO CERTIFY THAT', width / 2, 75, { align: 'center' });
+        doc.text('THIS IS TO CERTIFY THAT', width / 2, 80, { align: 'center' });
 
-        doc.setFontSize(36);
+        doc.setFontSize(38);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(0, 0, 0);
-        doc.text(studentName.toUpperCase(), width / 2, 95, { align: 'center' });
+        doc.text(studentName.toUpperCase(), width / 2, 100, { align: 'center' });
 
         doc.setDrawColor(200, 200, 200);
         doc.setLineWidth(0.5);
-        doc.line(width/2 - 60, 100, width/2 + 60, 100);
+        doc.line(width/2 - 60, 105, width/2 + 60, 105);
 
         doc.setFontSize(16);
         doc.setFont('helvetica', 'normal');
@@ -1551,7 +1565,7 @@ const CertificateGenerator = {
         const mainText = isConsolidated
             ? 'HAS SUCCESSFULLY COMPLETED ALL PRESCRIBED REQUIREMENTS FOR'
             : 'HAS SUCCESSFULLY COMPLETED THE COURSE';
-        doc.text(mainText, width / 2, 115, { align: 'center' });
+        doc.text(mainText, width / 2, 120, { align: 'center' });
 
         if (isConsolidated && options.courses) {
             doc.setFontSize(14);
@@ -1618,11 +1632,11 @@ const CertificateGenerator = {
         doc.text('VERIFIED', centerX + 45, midY, { align: 'center' });
 
         // Prominent ID and Date - refined placement
-        doc.setFontSize(9);
+        doc.setFontSize(8);
         doc.setFont('helvetica', 'bold');
-        doc.setTextColor(50, 50, 50);
-        doc.text(`Certificate ID: ${verificationId}`, 15, height - 12);
-        doc.text(`Issue Date: ${new Date(issueDate).toLocaleDateString()}`, width - 15, height - 12, { align: 'right' });
+        doc.setTextColor(100, 100, 100);
+        doc.text(`CERTIFICATE ID: ${verificationId}`, 14, height - 8);
+        doc.text(`ISSUE DATE: ${new Date(issueDate).toLocaleDateString()}`, width - 14, height - 8, { align: 'right' });
 
         // QR Code
         if (typeof QRCode !== 'undefined' && options.verificationUrl) {

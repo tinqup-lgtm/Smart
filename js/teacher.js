@@ -820,9 +820,11 @@ async function issueCert(studentEmail, existingId = null) {
 
     const verificationId = crypto.randomUUID().slice(0, 13).toUpperCase();
     const issueDate = new Date().toISOString();
+    const verificationUrl = `${window.location.origin}/index.html?page=verify&id=${verificationId}`;
 
     const doc = await CertificateGenerator.generatePDF(student.full_name, course.title, issueDate, verificationId, {
-        teacherName: user.full_name
+        teacherName: user.full_name,
+        verificationUrl: verificationUrl
     });
 
     if (!doc) throw new Error('PDF Generation failed');
@@ -839,7 +841,8 @@ async function issueCert(studentEmail, existingId = null) {
       course_id: courseId,
       certificate_url: certUrl,
       issued_at: issueDate,
-      status: 'pending_approval'
+      status: 'pending_approval',
+      metadata: { verification_id: verificationId }
     });
 
     UI.showNotification('Certificate issued and sent to admin for approval.', 'success');

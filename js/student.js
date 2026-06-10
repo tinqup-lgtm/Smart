@@ -1263,6 +1263,7 @@ window.renderCalendar = renderCalendar;
 window.renderMaterials = renderMaterials;
 window.renderDiscussions = renderDiscussions;
 window.renderCertificates = renderCertificates;
+window.showCertificateDetails = showCertificateDetails;
 
 async function showCertRequestModal() {
   const modal = document.getElementById('certRequestModal');
@@ -1345,28 +1346,56 @@ async function renderCertificates() {
     const certs = certsRes.data || [];
 
   container.innerHTML = `
-    <div class="flex-between">
-      <h2 class="m-0">My Certificates</h2>
-      <button class="button small w-auto" onclick="showCertRequestModal()">Request Certificate</button>
+    <div class="flex-between mb-30">
+      <div>
+        <h2 class="m-0">My Certificates</h2>
+        <p class="small text-muted mt-5">View and download your earned certificates of completion.</p>
+      </div>
+      <button class="button small w-auto px-30" onclick="showCertRequestModal()">Request Certificate</button>
     </div>
-    <div class="grid mt-20">
+    <div class="grid" style="grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 25px;">
       ${certs.map(c => {
         const isApproved = c.status === 'approved';
         const title = c.courses?.title || (c.type === 'consolidated' ? 'Consolidated Certificate' : 'Course Certificate');
-        return `
-        <div class="card flex-center flex-column relative">
-          <div style="font-size:40px">${isApproved ? '🎓' : '⏳'}</div>
-          <h3 class="m-0 mt-10 text-center">${escapeHtml(title)}</h3>
-          <p class="small mt-5">Status: <span class="badge-${c.status === 'approved' ? 'active' : (c.status === 'rejected' ? 'inactive' : 'warn')}">${c.status.toUpperCase()}</span></p>
-          ${c.status === 'rejected' ? `<p class="tiny danger-text mt-5">Reason: ${escapeHtml(c.metadata?.reason || 'N/A')}</p>` : ''}
-          <p class="tiny mt-5">Last Updated: ${new Date(c.updated_at).toLocaleDateString()}</p>
+        const statusClass = c.status === 'approved' ? 'badge-active' : (c.status === 'rejected' ? 'badge-inactive' : 'badge-warn');
 
-          <div class="flex gap-10 mt-15">
-            ${isApproved ? `<button class="button w-auto px-20" onclick="UI.viewFile('${escapeAttr(c.certificate_url)}', 'Certificate - ${escapeAttr(title)}')">Download</button>` : ''}
-            <button class="button secondary small w-auto" onclick="UI.showNotification('Status: ${c.status.toUpperCase()}', 'info')">Details</button>
+        return `
+        <div class="card cert-card relative flex-column" style="padding: 0; overflow: hidden; transition: all 0.3s ease;">
+          <div class="cert-card-header" style="height: 120px; background: ${isApproved ? 'linear-gradient(135deg, #5b2ea6 0%, #7c3aed 100%)' : '#f1f5f9'}; display: flex; align-items: center; justify-content: center; position: relative;">
+            <div style="font-size: 50px; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1));">${isApproved ? '📜' : '⏳'}</div>
+            <div class="absolute top-10 right-10">
+                <span class="badge ${statusClass} tiny" style="box-shadow: 0 2px 4px rgba(0,0,0,0.1);">${c.status.toUpperCase()}</span>
+            </div>
+          </div>
+
+          <div class="p-20 flex-column flex-1">
+            <h3 class="m-0 text-dark" style="font-size: 1.15rem; line-height: 1.4;">${escapeHtml(title)}</h3>
+            <div class="flex-center-y gap-10 mt-10">
+                <div class="tiny text-muted uppercase bold" style="letter-spacing: 0.5px;">Type: ${c.type.toUpperCase()}</div>
+                <div style="width: 4px; height: 4px; border-radius: 50%; background: #cbd5e1;"></div>
+                <div class="tiny text-muted">${new Date(c.updated_at).toLocaleDateString()}</div>
+            </div>
+
+            ${c.status === 'rejected' ? `
+                <div class="mt-15 p-10 bg-light border-radius-sm" style="border: 1px solid #fee2e2;">
+                    <div class="tiny bold danger-text uppercase mb-2">Rejection Reason</div>
+                    <div class="small text-muted italic">${escapeHtml(c.metadata?.reason || 'No reason provided.')}</div>
+                </div>
+            ` : ''}
+
+            <div class="flex gap-10 mt-auto pt-20">
+              ${isApproved ? `
+                <button class="button small w-auto px-15" onclick="UI.viewFile('${escapeAttr(c.certificate_url)}', 'Certificate - ${escapeAttr(title)}')">
+                    <span style="margin-right: 6px;">👁️</span> View
+                </button>
+              ` : ''}
+              <button class="button secondary small w-auto px-15" onclick="showCertificateDetails('${c.id}')">
+                Details
+              </button>
+            </div>
           </div>
         </div>
-      `}).join('') || '<div class="empty">No certificates earned yet. Finish a course to get one!</div>'}
+      `}).join('') || '<div class="empty" style="grid-column: 1/-1;">No certificates earned yet. Finish a course to get one!</div>'}
     </div>
 
     <!-- Request Modal -->
@@ -1394,6 +1423,74 @@ async function renderCertificates() {
     console.error('Certificates render error:', e);
     container.innerHTML = `<div class="empty">Error loading certificates.</div>`;
   }
+}
+
+async function showCertificateDetails(certId) {
+    try {
+        const user = await SessionManager.getCurrentUser();
+        const { data: certs } = await SupabaseDB.getCertificates(user.email);
+        const cert = certs.find(c => c.id === certId);
+        if (!cert) return;
+
+        const title = cert.courses?.title || (cert.type === 'consolidated' ? 'Consolidated Certificate' : 'Course Certificate');
+        const verificationId = cert.metadata?.verification_id;
+        const verificationUrl = verificationId ? `${window.location.origin}/index.html?page=verify&id=${verificationId}` : null;
+
+        const backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop';
+        backdrop.style.display = 'flex';
+        backdrop.innerHTML = `
+            <div class="modal animate-fade-in" style="max-width: 500px;">
+                <div class="flex-between mb-20">
+                    <h3 class="m-0">Certificate Details</h3>
+                    <button class="button secondary tiny w-auto" onclick="this.closest('.modal-backdrop').remove()">✕</button>
+                </div>
+
+                <div class="flex-column gap-15">
+                    <div class="card p-15" style="background: var(--bg);">
+                        <label class="tiny text-muted uppercase bold">Title</label>
+                        <div class="bold">${escapeHtml(title)}</div>
+                    </div>
+
+                    <div class="grid-2 gap-15">
+                        <div class="card p-10" style="background: var(--bg);">
+                            <label class="tiny text-muted uppercase bold">Status</label>
+                            <div class="bold uppercase" style="font-size: 0.85rem;">${escapeHtml(cert.status)}</div>
+                        </div>
+                        <div class="card p-10" style="background: var(--bg);">
+                            <label class="tiny text-muted uppercase bold">Type</label>
+                            <div class="bold uppercase" style="font-size: 0.85rem;">${escapeHtml(cert.type)}</div>
+                        </div>
+                    </div>
+
+                    <div class="card p-15" style="background: var(--bg);">
+                        <label class="tiny text-muted uppercase bold">Issued On</label>
+                        <div class="bold">${cert.issued_at ? new Date(cert.issued_at).toLocaleString() : 'N/A'}</div>
+                    </div>
+
+                    ${verificationId ? `
+                    <div class="card p-15" style="background: #f0f4ff; border: 1px dashed var(--purple);">
+                        <label class="tiny text-muted uppercase bold" style="color: var(--purple);">Verification Link</label>
+                        <div class="flex-between mt-5 gap-10">
+                            <input type="text" value="${escapeAttr(verificationUrl)}" readonly style="font-size: 0.75rem; margin: 0; background: #fff; border: 1px solid #d0d7de;">
+                            <button class="button small w-auto" onclick="navigator.clipboard.writeText('${escapeAttr(verificationUrl)}'); UI.showNotification('Link copied!', 'success')">Copy</button>
+                        </div>
+                        <div class="tiny text-muted mt-5">Anyone with this link can verify the authenticity of your certificate.</div>
+                    </div>
+                    ` : ''}
+
+                    <div class="flex gap-10 mt-10">
+                        <button class="button secondary w-auto" onclick="this.closest('.modal-backdrop').remove()">Close</button>
+                        ${cert.certificate_url ? `<button class="button primary w-auto" onclick="UI.viewFile('${escapeAttr(cert.certificate_url)}', 'Certificate')">View Certificate</button>` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(backdrop);
+    } catch (e) {
+        console.error('Show cert details error:', e);
+        UI.showNotification('Error loading details', 'error');
+    }
 }
 
 async function renderPlanner() {

@@ -452,13 +452,14 @@ async function approveCert(certId) {
 
         const verificationId = cert.metadata?.verification_id || crypto.randomUUID().slice(0, 13).toUpperCase();
         const issueDate = new Date().toISOString();
+        const verificationUrl = `${window.location.origin}/index.html?page=verify&id=${verificationId}`;
 
         const doc = await CertificateGenerator.generatePDF(
             cert.users?.full_name || cert.student_email,
             cert.courses?.title || 'Course Certificate',
             issueDate,
             verificationId,
-            { verificationUrl: `https://smartlms.edu/verify/${verificationId}` }
+            { verificationUrl: verificationUrl }
         );
 
         if (!doc) throw new Error('PDF Generation failed');
@@ -527,13 +528,14 @@ async function consolidateAndApproveCert(certId, studentEmail) {
 
         const verificationId = cert?.metadata?.verification_id || crypto.randomUUID().slice(0, 13).toUpperCase();
         const issueDate = cert?.issued_at || new Date().toISOString();
+        const verificationUrl = `${window.location.origin}/index.html?page=verify&id=${verificationId}`;
 
         const doc = await CertificateGenerator.generatePDF(
             student.full_name,
             'All Enrolled Courses',
             issueDate,
             verificationId,
-            { type: 'consolidated', courses: courses, verificationUrl: `https://smartlms.edu/verify/${verificationId}` }
+            { type: 'consolidated', courses: courses, verificationUrl: verificationUrl }
         );
 
         if (!doc) throw new Error('PDF Generation failed');
@@ -589,6 +591,7 @@ async function editCert(certId) {
         UI.showLoading('pageContent', 'Regenerating Certificate PDF...');
         const verificationId = cert.metadata?.verification_id || cert.id.slice(0, 13).toUpperCase();
         const issueDate = cert.issued_at || new Date().toISOString();
+        const verificationUrl = `${window.location.origin}/index.html?page=verify&id=${verificationId}`;
 
         const doc = await CertificateGenerator.generatePDF(
             cert.users?.full_name || cert.student_email,
@@ -598,7 +601,7 @@ async function editCert(certId) {
             {
                 type: cert.type,
                 courses: cert.type === 'consolidated' ? (await SupabaseDB.getEnrollments(cert.student_email)).data.map(e => e.courses).filter(Boolean) : null,
-                verificationUrl: `https://smartlms.edu/verify/${verificationId}`
+                verificationUrl: verificationUrl
             }
         );
 

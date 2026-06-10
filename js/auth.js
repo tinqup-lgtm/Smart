@@ -311,6 +311,15 @@ window.closeAuth = () => Auth.closeAuth();
 document.addEventListener('DOMContentLoaded', () => {
     Auth.init();
 
+    // Check for certificate verification deep link
+    const urlParams = new URLSearchParams(window.location.search);
+    const page = urlParams.get('page');
+    const certId = urlParams.get('id');
+
+    if (page === 'verify' && certId && typeof LandingUI !== 'undefined') {
+        LandingUI.showVerification(certId);
+    }
+
     const signupPassword = document.getElementById('password');
     if (signupPassword) {
         signupPassword.addEventListener('input', (e) => {
