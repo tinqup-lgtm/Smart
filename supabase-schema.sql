@@ -653,6 +653,22 @@ END $$;
 
 -- 4. Functional Triggers
 
+-- Trigger to ensure security context for all users (critical for restoration and RLS)
+CREATE OR REPLACE FUNCTION tr_ensure_user_secrets() RETURNS TRIGGER AS $$
+BEGIN
+    -- Use MIGRATION_PENDING as established placeholder for records without active passwords
+    INSERT INTO user_secrets (email, password_hash)
+    VALUES (NEW.email, 'MIGRATION_PENDING')
+    ON CONFLICT (email) DO NOTHING;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS tr_users_ensure_secrets ON users;
+CREATE TRIGGER tr_users_ensure_secrets
+AFTER INSERT OR UPDATE OF email ON users
+FOR EACH ROW EXECUTE PROCEDURE tr_ensure_user_secrets();
+
 CREATE OR REPLACE FUNCTION create_broadcast(
     p_course_id UUID DEFAULT NULL,
     p_target_role VARCHAR DEFAULT NULL,

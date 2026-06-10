@@ -153,6 +153,13 @@ class SupabaseDB {
             if (sanitized[key] === '') {
                 sanitized[key] = null;
             }
+
+            // 5. Enforce unique email constraints through strict normalization
+            // We use a targeted whitelist to avoid side-effects on fields like 'created_by' (which store names)
+            const EMAIL_FIELDS = ['email', 'student_email', 'teacher_email', 'user_email'];
+            if ((EMAIL_FIELDS.includes(key) || (table === 'invites' && key === 'created_by')) && typeof sanitized[key] === 'string') {
+                sanitized[key] = sanitized[key].trim().toLowerCase();
+            }
         });
         return sanitized;
     }
