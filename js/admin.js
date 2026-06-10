@@ -454,7 +454,7 @@ async function approveCert(certId) {
         const issueDate = new Date().toISOString();
 
         const doc = await CertificateGenerator.generatePDF(
-            cert.users?.full_name || cert.student_email,
+            cert.users?.full_name || cert.users?.full_name || cert.student_email,
             cert.courses?.title || 'Course Certificate',
             issueDate,
             verificationId,
@@ -475,7 +475,7 @@ async function approveCert(certId) {
         });
 
         await SupabaseDB.createNotification(
-            cert.student_email,
+            cert.users?.full_name || cert.student_email,
             'Certificate Approved',
             'Your certificate is ready for download.',
             null,
@@ -499,7 +499,7 @@ async function rejectCert(certId) {
         const { data: cert } = await supabaseClient.from('certificates').select('student_email').eq('id', certId).single();
         if (cert) {
             await SupabaseDB.createNotification(
-                cert.student_email,
+                cert.users?.full_name || cert.student_email,
                 'Certificate Request Rejected',
                 `Your certificate request was rejected. Reason: ${reason}`,
                 null,
@@ -590,7 +590,7 @@ async function editCert(certId) {
         const issueDate = cert.issued_at || new Date().toISOString();
 
         const doc = await CertificateGenerator.generatePDF(
-            cert.users?.full_name || cert.student_email,
+            cert.users?.full_name || cert.users?.full_name || cert.student_email,
             newTitle,
             issueDate,
             verificationId,
