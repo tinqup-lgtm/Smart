@@ -454,7 +454,7 @@ async function approveCert(certId) {
         const issueDate = new Date().toISOString();
 
         const doc = await CertificateGenerator.generatePDF(
-            cert.users?.full_name || cert.users?.full_name || cert.student_email,
+            cert.users?.full_name || cert.student_email,
             cert.courses?.title || 'Course Certificate',
             issueDate,
             verificationId,
@@ -475,7 +475,7 @@ async function approveCert(certId) {
         });
 
         await SupabaseDB.createNotification(
-            cert.users?.full_name || cert.student_email,
+            cert.student_email,
             'Certificate Approved',
             'Your certificate is ready for download.',
             null,
@@ -499,7 +499,7 @@ async function rejectCert(certId) {
         const { data: cert } = await supabaseClient.from('certificates').select('student_email').eq('id', certId).single();
         if (cert) {
             await SupabaseDB.createNotification(
-                cert.users?.full_name || cert.student_email,
+                cert.student_email,
                 'Certificate Request Rejected',
                 `Your certificate request was rejected. Reason: ${reason}`,
                 null,
@@ -518,14 +518,15 @@ async function consolidateAndApproveCert(certId, studentEmail) {
     if (!await UI.confirm('This will create a new consolidated certificate with ALL student enrolled courses. Proceed?')) return;
 
     try {
+        const { data: cert } = await supabaseClient.from('certificates').select('*').eq('id', certId).single();
         const student = await SupabaseDB.getUser(studentEmail);
         const enrollments = await SupabaseDB.getEnrollments(studentEmail);
         const courses = enrollments.data.map(e => e.courses).filter(Boolean);
 
         if (!student) throw new Error('Student data not found');
 
-        const verificationId = crypto.randomUUID().slice(0, 13).toUpperCase();
-        const issueDate = new Date().toISOString();
+        const verificationId = cert?.metadata?.verification_id || crypto.randomUUID().slice(0, 13).toUpperCase();
+        const issueDate = cert?.issued_at || new Date().toISOString();
 
         const doc = await CertificateGenerator.generatePDF(
             student.full_name,
@@ -546,7 +547,7 @@ async function consolidateAndApproveCert(certId, studentEmail) {
             certificate_url: certUrl,
             status: 'approved',
             type: 'consolidated',
-            metadata: { verification_id: verificationId }
+            metadata: { ...(cert?.metadata || {}), verification_id: verificationId }
         });
 
         await SupabaseDB.createNotification(
@@ -590,7 +591,7 @@ async function editCert(certId) {
         const issueDate = cert.issued_at || new Date().toISOString();
 
         const doc = await CertificateGenerator.generatePDF(
-            cert.users?.full_name || cert.users?.full_name || cert.student_email,
+            cert.users?.full_name || cert.student_email,
             newTitle,
             issueDate,
             verificationId,
