@@ -1589,21 +1589,33 @@ const CertificateGenerator = {
         doc.setFont('helvetica', 'normal');
         doc.text('Authorized Official', width - 70, sigY + 13, { align: 'center' });
 
-        // Official Stamp / Seal
+        // Official Stamp / Seal Section
         const stampX = width/2;
-        const stampY = 175;
+        const stampY = 178;
+        doc.setDrawColor(91, 46, 166);
+        doc.setLineWidth(0.2);
+        doc.rect(stampX - 25, 165, 50, 28); // Stamp box
+
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(150, 150, 150);
+        doc.text('OFFICIAL STAMP', stampX, 171, { align: 'center' });
+
+        // Actual Stamp Graphic
         doc.setDrawColor(91, 46, 166);
         doc.setLineWidth(0.5);
-        doc.circle(stampX, stampY - 5, 12);
-        doc.circle(stampX, stampY - 5, 11);
-        doc.setFontSize(6);
+        doc.circle(stampX, 178, 8);
+        doc.circle(stampX, 178, 7.5);
+        doc.setFontSize(4);
         doc.setFont('helvetica', 'bold');
-        doc.text('OFFICIAL', stampX, stampY - 8, { align: 'center' });
-        doc.text('SEAL', stampX, stampY - 5, { align: 'center' });
-        doc.text('SMARTLMS', stampX, stampY - 2, { align: 'center' });
+        doc.setTextColor(91, 46, 166);
+        doc.text('SMARTLMS', stampX, 177, { align: 'center' });
+        doc.text('OFFICIAL', stampX, 179, { align: 'center' });
+        doc.text('SEAL', stampX, 181, { align: 'center' });
 
         doc.setFontSize(10);
-        doc.text('VERIFIED', width/2, 192, { align: 'center' });
+        doc.setTextColor(0, 0, 0);
+        doc.text('VERIFIED', stampX, 190, { align: 'center' });
 
         // Prominent ID and Date
         doc.setFontSize(11);

@@ -468,10 +468,19 @@ async function approveCert(certId) {
         await SupabaseDB.uploadFile('certificates', path, pdfBlob);
         const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
 
-        await SupabaseDB.updateCertificateStatus(certId, 'approved', {
+        await SupabaseDB.updateCertificate(certId, {
             certificate_url: certUrl,
-            verification_id: verificationId
+            status: 'approved',
+            metadata: { ...(cert.metadata || {}), verification_id: verificationId }
         });
+
+        await SupabaseDB.createNotification(
+            cert.student_email,
+            'Certificate Approved',
+            'Your certificate is ready for download.',
+            null,
+            'cert_approved'
+        );
 
         UI.showNotification('Certificate approved and PDF generated!', 'success');
         renderReports('certificates');
@@ -485,7 +494,19 @@ async function rejectCert(certId) {
     const reason = await UI.prompt('Please provide a reason for rejection:', 'Course requirements not fully met', 'Rejection Reason');
     if (reason === null) return;
     try {
-        await SupabaseDB.updateCertificateStatus(certId, 'rejected', { reason });
+        await SupabaseDB.updateCertificate(certId, { status: 'rejected', metadata: { reason } });
+
+        const { data: cert } = await supabaseClient.from('certificates').select('student_email').eq('id', certId).single();
+        if (cert) {
+            await SupabaseDB.createNotification(
+                cert.student_email,
+                'Certificate Request Rejected',
+                `Your certificate request was rejected. Reason: ${reason}`,
+                null,
+                'cert_rejected'
+            );
+        }
+
         UI.showNotification('Certificate rejected', 'info');
         renderReports('certificates');
     } catch (e) {
@@ -524,7 +545,8 @@ async function consolidateAndApproveCert(certId, studentEmail) {
         await SupabaseDB.updateCertificate(certId, {
             certificate_url: certUrl,
             status: 'approved',
-            type: 'consolidated'
+            type: 'consolidated',
+            metadata: { verification_id: verificationId }
         });
 
         await SupabaseDB.createNotification(
@@ -555,20 +577,53 @@ async function deleteCert(certId) {
 }
 
 async function editCert(certId) {
-    const { data: cert } = await supabaseClient.from('certificates').select('*').eq('id', certId).single();
+    const { data: cert } = await supabaseClient.from('certificates').select('*, users!student_email(full_name)').eq('id', certId).single();
+    if (!cert) return;
     const currentTitle = cert.metadata?.course_title || cert.courses?.title || (cert.type === 'consolidated' ? 'All Enrolled Courses' : '');
 
     const newTitle = await UI.prompt('Enter new course title for this certificate:', currentTitle, 'Edit Certificate');
-    if (newTitle === null) return;
+    if (newTitle === null || newTitle === currentTitle) return;
 
     try {
+        UI.showLoading('pageContent', 'Regenerating Certificate PDF...');
+        const verificationId = cert.metadata?.verification_id || cert.id.slice(0, 13).toUpperCase();
+        const issueDate = cert.issued_at || new Date().toISOString();
+
+        const doc = await CertificateGenerator.generatePDF(
+            cert.users?.full_name || cert.student_email,
+            newTitle,
+            issueDate,
+            verificationId,
+            {
+                type: cert.type,
+                courses: cert.type === 'consolidated' ? (await SupabaseDB.getEnrollments(cert.student_email)).data.map(e => e.courses).filter(Boolean) : null,
+                verificationUrl: `https://smartlms.edu/verify/${verificationId}`
+            }
+        );
+
+        if (!doc) throw new Error('PDF Generation failed');
+
+        const pdfBlob = doc.output('blob');
+        const path = `certificates/${cert.student_email}/${cert.course_id || 'consolidated'}_${TimerManager.getTime()}.pdf`;
+
+        if (cert.certificate_url) {
+            await SupabaseDB.deleteFileByUrl(cert.certificate_url);
+        }
+
+        await SupabaseDB.uploadFile('certificates', path, pdfBlob);
+        const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
+
         await SupabaseDB.updateCertificate(certId, {
-            metadata: { ...(cert.metadata || {}), course_title: newTitle }
+            certificate_url: certUrl,
+            metadata: { ...(cert.metadata || {}), course_title: newTitle, verification_id: verificationId }
         });
-        UI.showNotification('Certificate updated. Please note this only updates the display title in the dashboard, not the PDF.', 'info');
+
+        UI.showNotification('Certificate updated and PDF regenerated!', 'success');
         renderReports('certificates');
     } catch (e) {
+        console.error('Edit error:', e);
         UI.showNotification('Error updating certificate: ' + e.message, 'error');
+        renderReports('certificates');
     }
 }
 
