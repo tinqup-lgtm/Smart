@@ -1663,7 +1663,10 @@ class SupabaseDB {
 
     // Invite operations
     static async saveInvite(invite) {
-        const data = await this._upsert('invites', invite, 'token');
+        // Use 'id' as onConflict if present to support administrative restoration/updates,
+        // otherwise fallback to the unique token for standard invitation generation.
+        const onConflict = invite.id ? 'id' : 'token';
+        const data = await this._upsert('invites', invite, onConflict);
         _cache.invalidate('invites');
         return data?.[0];
     }
