@@ -136,6 +136,84 @@ const LandingUI = {
 
     closeHelpCenter() {
         document.getElementById('helpCenterOverlay').classList.remove('active');
+    },
+
+    async showVerification(verificationId) {
+        if (!verificationId) return;
+
+        const content = document.getElementById('infoModalContent');
+        const overlay = document.getElementById('infoOverlay');
+        if (!content || !overlay) return;
+
+        overlay.classList.add('active');
+        content.innerHTML = `
+            <div class="flex-center flex-column p-40">
+                <div class="loading-spinner mb-20"></div>
+                <p class="text-muted">Verifying Certificate Integrity...</p>
+            </div>
+        `;
+
+        try {
+            const cert = await SupabaseDB.verifyCertificate(verificationId);
+
+            if (cert) {
+                const studentName = cert.users?.full_name || 'Verified Student';
+                const courseTitle = cert.courses?.title || (cert.type === 'consolidated' ? 'All Enrolled Courses' : 'Course Certificate');
+                const issueDate = new Date(cert.issued_at).toLocaleDateString(undefined, { dateStyle: 'long' });
+
+                content.innerHTML = `
+                    <div class="text-center p-20">
+                        <div style="font-size: 5rem; margin-bottom: 20px;">🛡️</div>
+                        <h2 class="success-text m-0">Certificate Verified</h2>
+                        <p class="text-muted mb-30">This is an authentic SmartLMS Certificate of Completion.</p>
+
+                        <div class="card" style="background: var(--bg); border: 1px solid var(--border); text-align: left; padding: 25px;">
+                            <div class="mb-15">
+                                <label class="tiny text-muted uppercase bold" style="letter-spacing: 1px;">Recipient Name</label>
+                                <div class="bold" style="font-size: 1.25rem;">${escapeHtml(studentName)}</div>
+                            </div>
+                            <div class="mb-15">
+                                <label class="tiny text-muted uppercase bold" style="letter-spacing: 1px;">Course Title</label>
+                                <div class="bold" style="font-size: 1.1rem; color: var(--purple);">${escapeHtml(courseTitle)}</div>
+                            </div>
+                            <div class="grid-2 gap-20">
+                                <div>
+                                    <label class="tiny text-muted uppercase bold" style="letter-spacing: 1px;">Issue Date</label>
+                                    <div class="bold">${escapeHtml(issueDate)}</div>
+                                </div>
+                                <div>
+                                    <label class="tiny text-muted uppercase bold" style="letter-spacing: 1px;">Verification ID</label>
+                                    <div class="bold" style="font-family: monospace;">${escapeHtml(verificationId)}</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-10 mt-30">
+                            <button class="button primary w-auto px-40" onclick="LandingUI.closeInfoModal()">Done</button>
+                            ${cert.certificate_url ? `<button class="button secondary w-auto px-40" onclick="UI.viewFile('${escapeAttr(cert.certificate_url)}', 'Verified Certificate')">View PDF</button>` : ''}
+                        </div>
+                    </div>
+                `;
+            } else {
+                content.innerHTML = `
+                    <div class="text-center p-40">
+                        <div style="font-size: 5rem; margin-bottom: 20px;">❌</div>
+                        <h2 class="danger-text">Verification Failed</h2>
+                        <p class="text-muted mb-30">We couldn't find a record for this certificate ID or it hasn't been officially approved yet.</p>
+                        <button class="button primary w-auto px-40" onclick="LandingUI.closeInfoModal()">Close</button>
+                    </div>
+                `;
+            }
+        } catch (e) {
+            console.error('[LandingUI] Verification error:', e);
+            content.innerHTML = `
+                <div class="text-center p-40">
+                    <h2 class="danger-text">System Error</h2>
+                    <p class="text-muted">An error occurred during verification. Please try again later.</p>
+                    <button class="button secondary w-auto px-40" onclick="LandingUI.closeInfoModal()">Close</button>
+                </div>
+            `;
+        }
     }
 };
 

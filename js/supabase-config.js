@@ -1441,11 +1441,25 @@ class SupabaseDB {
 
     static async getCertificates(studentEmail = null, teacherEmail = null, options = {}) {
         return this._request(async () => {
-            let query = supabaseClient.from('certificates').select('*, courses(*)', { count: 'exact' });
+            let query = supabaseClient.from('certificates').select('*, courses(*), users!student_email(full_name)', { count: 'exact' });
             if (studentEmail) query = query.eq('student_email', studentEmail);
             if (teacherEmail) query = query.eq('teacher_email', teacherEmail);
 
             return this._getPaginated(query.order('updated_at', { ascending: false }), options);
+        });
+    }
+
+    static async verifyCertificate(verificationId) {
+        return this._request(async () => {
+            const { data, error } = await supabaseClient
+                .from('certificates')
+                .select('*, courses(title), users!student_email(full_name)')
+                .filter('metadata->>verification_id', 'eq', verificationId)
+                .eq('status', 'approved')
+                .maybeSingle();
+
+            if (error) throw error;
+            return data;
         });
     }
 
