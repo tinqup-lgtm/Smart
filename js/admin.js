@@ -2188,7 +2188,19 @@ async function importBackup(event) {
           const hasSelfDep = config.dependencies?.some(d => d.self);
 
           const processBatch = async (batchRecords) => {
-              const batch = batchRecords.map(r => SupabaseDB._sanitizePayload(r, table));
+              const batch = batchRecords.map(r => {
+                  const sanitized = SupabaseDB._sanitizePayload(r, table);
+                  // Critical logic for updating existing records correctly:
+                  // If onConflict is NOT 'id' (meaning we match by natural key like email),
+                  // we remove the surrogate 'id' to prevent UniqueViolation during restoration
+                  // when a record with the same natural key already exists but with a different UUID.
+                  // Note: This is safe because relationships in this schema are either email-based
+                  // (for users) or reference parent IDs that are preserved (courses, assignments, etc.).
+                  if (config.onConflict !== 'id' && Object.prototype.hasOwnProperty.call(sanitized, 'id')) {
+                      delete sanitized.id;
+                  }
+                  return sanitized;
+              });
               const { error } = await supabaseClient
                   .from(table)
                   .upsert(batch, { onConflict: config.onConflict });
