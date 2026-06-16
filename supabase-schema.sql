@@ -8,15 +8,118 @@ SET client_min_messages TO NOTICE;
 -- Extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- 0. Internal helper for notification creation (bypasses RLS)
--- Defined early as it is used by triggers and RPCs
--- We drop it first to handle potential parameter name/type changes (ERROR 42P13)
-DROP FUNCTION IF EXISTS notify_user(VARCHAR, TEXT, TEXT, TEXT, TEXT) CASCADE;
+-- 0. Internal Auth Helpers (Defined early for use in triggers and RPCs)
 
+-- Internal helper to retrieve session ID from headers (DRY)
+CREATE OR REPLACE FUNCTION _get_session_id() RETURNS VARCHAR AS $$
+DECLARE
+  v_headers JSONB;
+BEGIN
+  BEGIN
+    v_headers := current_setting('request.headers', true)::jsonb;
+    RETURN v_headers->>'x-session-id';
+  EXCEPTION WHEN OTHERS THEN
+    RETURN NULL;
+  END;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- Raw helpers that bypass reset-state blocking (Internal use only)
+CREATE OR REPLACE FUNCTION get_auth_email_raw() RETURNS VARCHAR AS $$
+DECLARE
+  v_session_id VARCHAR;
+  v_email VARCHAR;
+BEGIN
+  v_session_id := _get_session_id();
+  IF v_session_id IS NOT NULL AND v_session_id <> '' THEN
+    SELECT email INTO v_email FROM user_secrets WHERE session_id = v_session_id LIMIT 1;
+    RETURN v_email;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION get_auth_role_raw() RETURNS VARCHAR AS $$
+DECLARE
+  v_session_id VARCHAR;
+  v_role VARCHAR;
+BEGIN
+  v_session_id := _get_session_id();
+  IF v_session_id IS NOT NULL AND v_session_id <> '' THEN
+    SELECT u.role INTO v_role
+    FROM users u
+    JOIN user_secrets s ON u.email = s.email
+    WHERE s.session_id = v_session_id
+    LIMIT 1;
+    RETURN v_role;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
+-- Public helpers with mandatory status and reset blocking
+-- Returns NULL if user is inactive, flagged, or has an active 'approved' password reset
+CREATE OR REPLACE FUNCTION get_auth_email() RETURNS VARCHAR AS $$
+DECLARE
+  v_email_raw VARCHAR;
+  v_email VARCHAR;
+  v_active BOOLEAN;
+  v_flagged BOOLEAN;
+  v_reset_status TEXT;
+BEGIN
+  v_email_raw := get_auth_email_raw();
+  IF v_email_raw IS NOT NULL THEN
+    SELECT email, active, flagged, reset_request->>'status'
+    INTO v_email, v_active, v_flagged, v_reset_status
+    FROM users WHERE email = v_email_raw;
+
+    IF v_email IS NOT NULL AND v_active = TRUE AND v_flagged = FALSE AND (v_reset_status IS NULL OR v_reset_status != 'approved') THEN
+        RETURN v_email;
+    END IF;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION get_auth_role() RETURNS VARCHAR AS $$
+DECLARE
+  v_email_raw VARCHAR;
+  v_role VARCHAR;
+  v_active BOOLEAN;
+  v_flagged BOOLEAN;
+  v_reset_status TEXT;
+BEGIN
+  v_email_raw := get_auth_email_raw();
+  IF v_email_raw IS NOT NULL THEN
+    SELECT role, active, flagged, reset_request->>'status'
+    INTO v_role, v_active, v_flagged, v_reset_status
+    FROM users WHERE email = v_email_raw;
+
+    IF v_role IS NOT NULL AND v_active = TRUE AND v_flagged = FALSE AND (v_reset_status IS NULL OR v_reset_status != 'approved') THEN
+        RETURN v_role;
+    END IF;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION is_admin() RETURNS BOOLEAN AS $$
+  SELECT get_auth_role() = 'admin';
+$$ LANGUAGE sql STABLE;
+
+CREATE OR REPLACE FUNCTION is_teacher() RETURNS BOOLEAN AS $$
+  SELECT get_auth_role() = 'teacher';
+$$ LANGUAGE sql STABLE;
+
+-- Restoration / Migration Mode Helper (SECURED)
 CREATE OR REPLACE FUNCTION _is_migration_mode() RETURNS BOOLEAN AS $$
 DECLARE
   v_headers JSONB;
 BEGIN
+  -- Security: Only authenticated administrators can activate migration mode
+  -- This prevents malicious users from sending the header to bypass logic.
+  IF NOT is_admin() THEN RETURN FALSE; END IF;
+
   BEGIN
     v_headers := current_setting('request.headers', true)::jsonb;
     RETURN COALESCE(v_headers->>'x-migration-mode' = 'true', false);
@@ -26,6 +129,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE;
 
+
+-- 0. Internal helper for notification creation (bypasses RLS)
+-- Defined early as it is used by triggers and RPCs
+-- We drop it first to handle potential parameter name/type changes (ERROR 42P13)
+DROP FUNCTION IF EXISTS notify_user(VARCHAR, TEXT, TEXT, TEXT, TEXT) CASCADE;
 CREATE OR REPLACE FUNCTION notify_user(p_email VARCHAR, p_title TEXT, p_message TEXT, p_link TEXT DEFAULT NULL, p_type TEXT DEFAULT 'system')
 RETURNS VOID AS $$
 BEGIN
@@ -396,6 +504,127 @@ BEGIN
     ALTER TABLE users ADD CONSTRAINT users_email_check CHECK (validate_email_format(email));
 
     ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
+
+    -- Case-Insensitive Email Constraints for existing tables
+    BEGIN
+        ALTER TABLE users ADD CONSTRAINT users_email_lower_check CHECK (email = LOWER(email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE user_secrets ADD CONSTRAINT secrets_email_lower_check CHECK (email = LOWER(email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE courses ADD CONSTRAINT courses_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE topics ADD CONSTRAINT topics_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE lessons ADD CONSTRAINT lessons_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE enrollments ADD CONSTRAINT enroll_student_email_lower_check CHECK (student_email = LOWER(student_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE assignments ADD CONSTRAINT assign_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE submissions ADD CONSTRAINT sub_student_email_lower_check CHECK (student_email = LOWER(student_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE submissions ADD CONSTRAINT sub_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE live_classes ADD CONSTRAINT lc_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE attendance ADD CONSTRAINT att_student_email_lower_check CHECK (student_email = LOWER(student_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE attendance ADD CONSTRAINT att_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE quizzes ADD CONSTRAINT quiz_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE quiz_submissions ADD CONSTRAINT qs_student_email_lower_check CHECK (student_email = LOWER(student_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE quiz_submissions ADD CONSTRAINT qs_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE materials ADD CONSTRAINT mat_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE discussions ADD CONSTRAINT disc_user_email_lower_check CHECK (user_email = LOWER(user_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE discussions ADD CONSTRAINT disc_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE notifications ADD CONSTRAINT notif_user_email_lower_check CHECK (user_email = LOWER(user_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE broadcasts ADD CONSTRAINT bc_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE planner ADD CONSTRAINT plan_user_email_lower_check CHECK (user_email = LOWER(user_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE certificates ADD CONSTRAINT cert_student_email_lower_check CHECK (student_email = LOWER(student_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE certificates ADD CONSTRAINT cert_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE study_sessions ADD CONSTRAINT ss_user_email_lower_check CHECK (user_email = LOWER(user_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE study_sessions ADD CONSTRAINT ss_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE invites ADD CONSTRAINT invite_email_lower_check CHECK (email IS NULL OR email = LOWER(email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE invites ADD CONSTRAINT invite_created_by_lower_check CHECK (created_by = LOWER(created_by));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE violations ADD CONSTRAINT vio_user_email_lower_check CHECK (user_email = LOWER(user_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE violations ADD CONSTRAINT vio_teacher_email_lower_check CHECK (teacher_email = LOWER(teacher_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
+
+    BEGIN
+        ALTER TABLE support_tickets ADD CONSTRAINT ticket_user_email_lower_check CHECK (user_email = LOWER(user_email));
+    EXCEPTION WHEN OTHERS THEN NULL; END;
     ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '30 days');
     ALTER TABLE notifications ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '90 days');
     ALTER TABLE quiz_submissions ADD COLUMN IF NOT EXISTS attempt_number INTEGER;
@@ -1292,109 +1521,7 @@ CREATE INDEX IF NOT EXISTS idx_violations_metadata_gin ON violations USING GIN (
 
 -- 7. Helper Functions
 
--- Auth helpers strictly using Custom x-session-id header
-
--- Internal helper to retrieve session ID from headers (DRY)
-CREATE OR REPLACE FUNCTION _get_session_id() RETURNS VARCHAR AS $$
-DECLARE
-  v_headers JSONB;
-BEGIN
-  BEGIN
-    v_headers := current_setting('request.headers', true)::jsonb;
-    RETURN v_headers->>'x-session-id';
-  EXCEPTION WHEN OTHERS THEN
-    RETURN NULL;
-  END;
-END;
-$$ LANGUAGE plpgsql STABLE;
-
--- Raw helpers that bypass reset-state blocking (Internal use only)
-CREATE OR REPLACE FUNCTION get_auth_email_raw() RETURNS VARCHAR AS $$
-DECLARE
-  v_session_id VARCHAR;
-  v_email VARCHAR;
-BEGIN
-  v_session_id := _get_session_id();
-  IF v_session_id IS NOT NULL AND v_session_id <> '' THEN
-    SELECT email INTO v_email FROM user_secrets WHERE session_id = v_session_id LIMIT 1;
-    RETURN v_email;
-  END IF;
-  RETURN NULL;
-END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
-
-CREATE OR REPLACE FUNCTION get_auth_role_raw() RETURNS VARCHAR AS $$
-DECLARE
-  v_session_id VARCHAR;
-  v_role VARCHAR;
-BEGIN
-  v_session_id := _get_session_id();
-  IF v_session_id IS NOT NULL AND v_session_id <> '' THEN
-    SELECT u.role INTO v_role
-    FROM users u
-    JOIN user_secrets s ON u.email = s.email
-    WHERE s.session_id = v_session_id
-    LIMIT 1;
-    RETURN v_role;
-  END IF;
-  RETURN NULL;
-END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
-
--- Public helpers with mandatory reset blocking
--- Public helpers with mandatory status and reset blocking
--- Returns NULL if user is inactive, flagged, or has an active 'approved' password reset
-CREATE OR REPLACE FUNCTION get_auth_email() RETURNS VARCHAR AS $$
-DECLARE
-  v_email_raw VARCHAR;
-  v_email VARCHAR;
-  v_active BOOLEAN;
-  v_flagged BOOLEAN;
-  v_reset_status TEXT;
-BEGIN
-  v_email_raw := get_auth_email_raw();
-  IF v_email_raw IS NOT NULL THEN
-    SELECT email, active, flagged, reset_request->>'status'
-    INTO v_email, v_active, v_flagged, v_reset_status
-    FROM users WHERE email = v_email_raw;
-
-    IF v_email IS NOT NULL AND v_active = TRUE AND v_flagged = FALSE AND (v_reset_status IS NULL OR v_reset_status != 'approved') THEN
-        RETURN v_email;
-    END IF;
-  END IF;
-  RETURN NULL;
-END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
-
-CREATE OR REPLACE FUNCTION get_auth_role() RETURNS VARCHAR AS $$
-DECLARE
-  v_email_raw VARCHAR;
-  v_role VARCHAR;
-  v_active BOOLEAN;
-  v_flagged BOOLEAN;
-  v_reset_status TEXT;
-BEGIN
-  v_email_raw := get_auth_email_raw();
-  IF v_email_raw IS NOT NULL THEN
-    SELECT role, active, flagged, reset_request->>'status'
-    INTO v_role, v_active, v_flagged, v_reset_status
-    FROM users WHERE email = v_email_raw;
-
-    IF v_role IS NOT NULL AND v_active = TRUE AND v_flagged = FALSE AND (v_reset_status IS NULL OR v_reset_status != 'approved') THEN
-        RETURN v_role;
-    END IF;
-  END IF;
-  RETURN NULL;
-END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
-
-CREATE OR REPLACE FUNCTION is_admin() RETURNS BOOLEAN AS $$
-  SELECT get_auth_role() = 'admin';
-$$ LANGUAGE sql STABLE;
-
-CREATE OR REPLACE FUNCTION is_teacher() RETURNS BOOLEAN AS $$
-  SELECT get_auth_role() = 'teacher';
-$$ LANGUAGE sql STABLE;
+-- Auth helpers strictly using Custom x-session-id header (Redundant - moved to Section 0)
 
 -- Internal helper for atomic metadata updates
 -- Safely appends or removes values from user metadata tracking arrays
