@@ -2150,6 +2150,7 @@ async function importBackup(event) {
       }
 
       _isRestoring = true;
+      sessionStorage.setItem('migrationMode', 'true');
       UI.showLoading('mgt-area', 'Initializing restoration...');
 
       // 1. Pre-Restore Integrity Audit & Auto-Fix
@@ -2254,6 +2255,7 @@ async function importBackup(event) {
       UI.showNotification('Restoration Failed: ' + err.message, 'error');
     } finally {
       _isRestoring = false;
+      sessionStorage.removeItem('migrationMode');
       UI.hideLoading('mgt-area');
       event.target.value = '';
     }
