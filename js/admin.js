@@ -19,7 +19,7 @@ const BACKUP_CONFIG = {
         { name: 'user_secrets', onConflict: 'email', orderBy: 'email', dependencies: [{ table: 'users', field: 'email' }] },
         { name: 'maintenance', onConflict: 'id', orderBy: 'id', dependencies: [] },
         { name: 'support_tickets', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'users', field: 'user_email', optional: true }] },
-        { name: 'invites', onConflict: 'token', orderBy: 'token', dependencies: [{ table: 'users', field: 'created_by' }] },
+        { name: 'invites', onConflict: 'token', orderBy: 'token', dependencies: [{ table: 'users', field: 'created_by', optional: true }] },
         { name: 'courses', onConflict: 'id', orderBy: 'id', dependencies: [{ table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'live_classes', onConflict: 'id', orderBy: 'start_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'planner', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'users', field: 'user_email' }] },
@@ -2062,13 +2062,14 @@ async function exportBackup() {
         }
     }
 
-    // Align with strictly requested format and table order as per user JSON
+    // Align with strictly requested format and table order as per user JSON.
+    // Note: Restoration always follows the topological order defined in BACKUP_CONFIG.tables
+    // to ensure referential integrity regardless of the JSON file structure.
     const requestedOrder = [
-        'assignments', 'maintenance', 'users', 'user_secrets', 'lessons', 'topics', 'invites',
-        'courses', 'quizzes', 'materials', 'support_tickets', 'enrollments',
-        'planner', 'live_classes', 'notifications', 'broadcasts', 'submissions',
-        'attendance', 'discussions', 'study_sessions', 'certificates',
-        'quiz_submissions', 'violations'
+        'maintenance', 'submissions', 'lessons', 'courses', 'assignments', 'materials',
+        'support_tickets', 'quizzes', 'topics', 'live_classes', 'notifications', 'users',
+        'user_secrets', 'enrollments', 'attendance', 'certificates', 'discussions',
+        'study_sessions', 'invites', 'quiz_submissions', 'planner', 'broadcasts', 'violations'
     ];
     const orderedTables = {};
     // 1. First, include requested tables in specific order
