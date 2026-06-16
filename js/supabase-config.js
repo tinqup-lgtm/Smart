@@ -14,13 +14,21 @@ const clientOptions = {
     global: {
         fetch: (url, options) => {
             const sid = sessionStorage.getItem('sessionId');
+            const migrationMode = sessionStorage.getItem('migrationMode');
+            options = options || {};
+            const headers = new Headers(options.headers || {});
+
             // Inject sid if it exists in sessionStorage
             if (sid) {
-                options = options || {};
-                const headers = new Headers(options.headers || {});
                 headers.set('x-session-id', sid);
-                options.headers = headers;
             }
+
+            // Inject migration mode header if active
+            if (migrationMode === 'true') {
+                headers.set('x-migration-mode', 'true');
+            }
+
+            options.headers = headers;
             return fetch(url, options);
         }
     },
@@ -373,9 +381,10 @@ class SupabaseDB {
         // We skip _sanitizePayload here because we're passing individual fields to an RPC,
         // and metadata is already expected to be a JSONB object.
         const sanitizedMetadata = user.metadata || {};
+        const normalizedEmail = (user.email || '').trim().toLowerCase();
 
         const { data, error } = await supabaseClient.rpc('create_user_secure', {
-            p_email: user.email,
+            p_email: normalizedEmail,
             p_full_name: user.full_name,
             p_phone: user.phone,
             p_password_hash: user.password,

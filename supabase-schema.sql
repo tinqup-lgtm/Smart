@@ -12,6 +12,20 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- Defined early as it is used by triggers and RPCs
 -- We drop it first to handle potential parameter name/type changes (ERROR 42P13)
 DROP FUNCTION IF EXISTS notify_user(VARCHAR, TEXT, TEXT, TEXT, TEXT) CASCADE;
+
+CREATE OR REPLACE FUNCTION _is_migration_mode() RETURNS BOOLEAN AS $$
+DECLARE
+  v_headers JSONB;
+BEGIN
+  BEGIN
+    v_headers := current_setting('request.headers', true)::jsonb;
+    RETURN COALESCE(v_headers->>'x-migration-mode' = 'true', false);
+  EXCEPTION WHEN OTHERS THEN
+    RETURN FALSE;
+  END;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
 CREATE OR REPLACE FUNCTION notify_user(p_email VARCHAR, p_title TEXT, p_message TEXT, p_link TEXT DEFAULT NULL, p_type TEXT DEFAULT 'system')
 RETURNS VOID AS $$
 BEGIN
@@ -41,7 +55,7 @@ $$ language 'plpgsql' SECURITY DEFINER;
 
 CREATE TABLE IF NOT EXISTS users (
   id UUID DEFAULT uuid_generate_v4() UNIQUE,
-  email VARCHAR(255) PRIMARY KEY,
+  email VARCHAR(255) PRIMARY KEY CHECK (email = LOWER(email)),
   full_name VARCHAR(255) NOT NULL,
   phone VARCHAR(50),
   role VARCHAR(50) NOT NULL CHECK (role IN ('student', 'teacher', 'admin')),
@@ -60,7 +74,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Table for sensitive authentication data (Hidden from public SELECT)
 CREATE TABLE IF NOT EXISTS user_secrets (
-  email VARCHAR(255) PRIMARY KEY REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE,
+  email VARCHAR(255) PRIMARY KEY REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE CHECK (email = LOWER(email)),
   password_hash VARCHAR(255) NOT NULL,
   session_id VARCHAR(255),
   reset_data JSONB, -- Stores sensitive reset metadata (e.g., temp_password_plain)
@@ -71,7 +85,7 @@ CREATE TABLE IF NOT EXISTS courses (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   title VARCHAR(255) NOT NULL,
   description TEXT,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   created_by VARCHAR(255), -- Stores teacher's full name
   enrollment_id VARCHAR(255), -- Optional ID required for student enrollment
   status VARCHAR(50) DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived')),
@@ -83,7 +97,7 @@ CREATE TABLE IF NOT EXISTS courses (
 CREATE TABLE IF NOT EXISTS topics (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   title VARCHAR(255) NOT NULL,
   description TEXT,
   order_index INTEGER DEFAULT 0,
@@ -95,7 +109,7 @@ CREATE TABLE IF NOT EXISTS lessons (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
   topic_id UUID REFERENCES topics(id) ON DELETE CASCADE,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   title VARCHAR(255) NOT NULL,
   content TEXT,
   video_url TEXT,
@@ -106,7 +120,7 @@ CREATE TABLE IF NOT EXISTS lessons (
 
 CREATE TABLE IF NOT EXISTS enrollments (
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
-  student_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE,
+  student_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE CHECK (student_email = LOWER(student_email)),
   enrolled_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   progress INTEGER DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
@@ -120,7 +134,7 @@ CREATE TABLE IF NOT EXISTS assignments (
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
   title VARCHAR(255) NOT NULL,
   description TEXT,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   start_at TIMESTAMP WITH TIME ZONE,
   due_date TIMESTAMP WITH TIME ZONE,
   points_possible INTEGER DEFAULT 100 CHECK (points_possible > 0),
@@ -139,8 +153,8 @@ CREATE TABLE IF NOT EXISTS submissions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
   assignment_id UUID REFERENCES assignments(id) ON DELETE CASCADE,
-  student_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  student_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE CHECK (student_email = LOWER(student_email)),
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   submitted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   answers JSONB DEFAULT '{}'::jsonb,
@@ -160,7 +174,7 @@ CREATE TABLE IF NOT EXISTS submissions (
 CREATE TABLE IF NOT EXISTS live_classes (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   title VARCHAR(255) NOT NULL,
   description TEXT,
   start_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -180,8 +194,8 @@ CREATE TABLE IF NOT EXISTS attendance (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
   live_class_id UUID REFERENCES live_classes(id) ON DELETE CASCADE,
-  student_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  student_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE CHECK (student_email = LOWER(student_email)),
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   join_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   leave_time TIMESTAMP WITH TIME ZONE,
   duration INTEGER DEFAULT 0,
@@ -194,7 +208,7 @@ CREATE TABLE IF NOT EXISTS attendance (
 CREATE TABLE IF NOT EXISTS quizzes (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   title VARCHAR(255) NOT NULL,
   description TEXT,
   time_limit INTEGER DEFAULT 0 CHECK (time_limit >= 0),
@@ -214,8 +228,8 @@ CREATE TABLE IF NOT EXISTS quiz_submissions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
   quiz_id UUID REFERENCES quizzes(id) ON DELETE CASCADE,
-  student_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  student_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE CHECK (student_email = LOWER(student_email)),
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   attempt_number INTEGER,
   score INTEGER CHECK (score >= 0),
   total_points INTEGER CHECK (total_points >= 0),
@@ -232,7 +246,7 @@ CREATE TABLE IF NOT EXISTS quiz_submissions (
 CREATE TABLE IF NOT EXISTS materials (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   title VARCHAR(255) NOT NULL,
   description TEXT,
   file_url TEXT,
@@ -244,8 +258,8 @@ CREATE TABLE IF NOT EXISTS materials (
 CREATE TABLE IF NOT EXISTS discussions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
-  user_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  user_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE CHECK (user_email = LOWER(user_email)),
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   parent_id UUID REFERENCES discussions(id) ON DELETE CASCADE,
   title VARCHAR(255),
   content TEXT NOT NULL,
@@ -255,7 +269,7 @@ CREATE TABLE IF NOT EXISTS discussions (
 
 CREATE TABLE IF NOT EXISTS notifications (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE,
+  user_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE CHECK (user_email = LOWER(user_email)),
   title VARCHAR(255) NOT NULL,
   message TEXT NOT NULL,
   link TEXT,
@@ -269,7 +283,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE TABLE IF NOT EXISTS broadcasts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   target_role VARCHAR(50) CHECK (target_role IS NULL OR target_role IN ('student', 'teacher', 'admin')),
   title VARCHAR(255) NOT NULL,
   message TEXT NOT NULL,
@@ -293,7 +307,7 @@ CREATE TABLE IF NOT EXISTS maintenance (
 
 CREATE TABLE IF NOT EXISTS planner (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE,
+  user_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE CHECK (user_email = LOWER(user_email)),
   title VARCHAR(255) NOT NULL,
   description TEXT,
   due_date TIMESTAMP WITH TIME ZONE,
@@ -306,8 +320,8 @@ CREATE TABLE IF NOT EXISTS planner (
 CREATE TABLE IF NOT EXISTS certificates (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
-  student_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  student_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE CHECK (student_email = LOWER(student_email)),
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   issued_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   certificate_url TEXT,
@@ -319,9 +333,9 @@ CREATE TABLE IF NOT EXISTS certificates (
 
 CREATE TABLE IF NOT EXISTS study_sessions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE,
+  user_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE CHECK (user_email = LOWER(user_email)),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   duration INTEGER NOT NULL CHECK (duration > 0),
   started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   ended_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -331,20 +345,20 @@ CREATE TABLE IF NOT EXISTS study_sessions (
 CREATE TABLE IF NOT EXISTS invites (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   token VARCHAR(255) UNIQUE NOT NULL,
-  email VARCHAR(255),
+  email VARCHAR(255) CHECK (email IS NULL OR email = LOWER(email)),
   role VARCHAR(50) NOT NULL CHECK (role IN ('student', 'teacher', 'admin')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
   used_at TIMESTAMP WITH TIME ZONE,
-  created_by VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL
+  created_by VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (created_by = LOWER(created_by))
 );
 
 CREATE TABLE IF NOT EXISTS violations (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
-  user_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE,
-  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL,
+  user_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE CASCADE CHECK (user_email = LOWER(user_email)),
+  teacher_email VARCHAR(255) REFERENCES users(email) ON UPDATE CASCADE ON DELETE SET NULL CHECK (teacher_email = LOWER(teacher_email)),
   assessment_id UUID NOT NULL,
   assessment_type VARCHAR(50) NOT NULL CHECK (assessment_type IN ('assignment', 'quiz')),
   type VARCHAR(100) NOT NULL,
@@ -363,7 +377,7 @@ CREATE TABLE IF NOT EXISTS violations (
 
 CREATE TABLE IF NOT EXISTS support_tickets (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_email VARCHAR(255) NOT NULL,
+  user_email VARCHAR(255) NOT NULL CHECK (user_email = LOWER(user_email)),
   role VARCHAR(50) CHECK (role IN ('student', 'teacher', 'admin')),
   subject VARCHAR(255) NOT NULL,
   message TEXT NOT NULL,
@@ -688,7 +702,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION tr_notify_live_class() RETURNS TRIGGER AS $$
 BEGIN
-  IF is_admin() THEN RETURN NEW; END IF;
+  IF _is_migration_mode() THEN RETURN NEW; END IF;
   IF (TG_OP = 'INSERT') THEN
     IF (NEW.status = 'scheduled') THEN
       PERFORM create_broadcast(NEW.course_id, 'student', 'Live Class Scheduled', 'A new live class "' || NEW.title || '" has been scheduled for ' || NEW.start_at, 'student.html?page=live', 'live_class');
@@ -711,7 +725,7 @@ CREATE TRIGGER tr_live_class_event AFTER INSERT OR UPDATE ON live_classes FOR EA
 
 CREATE OR REPLACE FUNCTION tr_notify_assignment() RETURNS TRIGGER AS $$
 BEGIN
-  IF is_admin() THEN RETURN NEW; END IF;
+  IF _is_migration_mode() THEN RETURN NEW; END IF;
   IF (NEW.status = 'published' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status != 'published'))) THEN
     PERFORM create_broadcast(NEW.course_id, 'student', 'New Assignment', 'A new assignment "' || NEW.title || '" has been published.', 'student.html?page=assignments', 'assignment_published');
   END IF;
@@ -724,7 +738,7 @@ CREATE TRIGGER tr_assignment_published AFTER INSERT OR UPDATE ON assignments FOR
 
 CREATE OR REPLACE FUNCTION tr_notify_quiz() RETURNS TRIGGER AS $$
 BEGIN
-  IF is_admin() THEN RETURN NEW; END IF;
+  IF _is_migration_mode() THEN RETURN NEW; END IF;
   IF (NEW.status = 'published' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status != 'published'))) THEN
     PERFORM create_broadcast(NEW.course_id, 'student', 'New Quiz Available', 'A new quiz "' || NEW.title || '" has been published.', 'student.html?page=quizzes', 'quiz_published');
   END IF;
@@ -739,7 +753,7 @@ CREATE OR REPLACE FUNCTION tr_notify_submission() RETURNS TRIGGER AS $$
 DECLARE
   v_teacher_email VARCHAR(255);
 BEGIN
-  IF is_admin() THEN RETURN NEW; END IF;
+  IF _is_migration_mode() THEN RETURN NEW; END IF;
   SELECT c.teacher_email INTO v_teacher_email FROM courses c JOIN assignments a ON c.id = a.course_id WHERE a.id = NEW.assignment_id;
   IF (NEW.status = 'submitted' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status != 'submitted'))) THEN
     IF v_teacher_email IS NOT NULL THEN
@@ -757,7 +771,7 @@ CREATE OR REPLACE FUNCTION tr_notify_regrade_request() RETURNS TRIGGER AS $$
 DECLARE
   v_teacher_email VARCHAR(255);
 BEGIN
-  IF is_admin() THEN RETURN NEW; END IF;
+  IF _is_migration_mode() THEN RETURN NEW; END IF;
   -- Only trigger if regrade_request is newly added or changed and not null
   IF (NEW.regrade_request IS NOT NULL AND (OLD.regrade_request IS NULL OR OLD.regrade_request != NEW.regrade_request)) THEN
     SELECT teacher_email INTO v_teacher_email FROM courses WHERE id = NEW.course_id;
@@ -774,7 +788,7 @@ CREATE TRIGGER tr_submission_regrade_request AFTER UPDATE ON submissions FOR EAC
 
 CREATE OR REPLACE FUNCTION tr_notify_grade() RETURNS TRIGGER AS $$
 BEGIN
-  IF is_admin() THEN RETURN NEW; END IF;
+  IF _is_migration_mode() THEN RETURN NEW; END IF;
   IF (NEW.status = 'graded' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.status != 'graded'))) THEN
     PERFORM notify_user(NEW.student_email, 'Assignment Graded', 'Your assignment has been graded. Score: ' || NEW.final_grade || '%', 'student.html?page=assignments', 'grade_posted');
   END IF;
@@ -787,7 +801,7 @@ CREATE TRIGGER tr_grade_posted AFTER INSERT OR UPDATE ON submissions FOR EACH RO
 
 CREATE OR REPLACE FUNCTION tr_notify_material_published() RETURNS TRIGGER AS $$
 BEGIN
-  IF is_admin() THEN RETURN NEW; END IF;
+  IF _is_migration_mode() THEN RETURN NEW; END IF;
   IF (TG_OP = 'INSERT') THEN
     PERFORM create_broadcast(NEW.course_id, 'student', 'New Material Added', 'New learning material "' || NEW.title || '" has been uploaded.', 'student.html?page=materials', 'system');
   END IF;
@@ -800,6 +814,7 @@ CREATE TRIGGER tr_material_published AFTER INSERT ON materials FOR EACH ROW EXEC
 
 CREATE OR REPLACE FUNCTION tr_sync_course_teacher_name() RETURNS TRIGGER AS $$
 BEGIN
+  IF _is_migration_mode() THEN RETURN NEW; END IF;
   SELECT full_name INTO NEW.created_by FROM users WHERE email = NEW.teacher_email;
   RETURN NEW;
 END;
@@ -812,6 +827,7 @@ FOR EACH ROW EXECUTE PROCEDURE tr_sync_course_teacher_name();
 
 CREATE OR REPLACE FUNCTION tr_update_courses_teacher_name() RETURNS TRIGGER AS $$
 BEGIN
+  IF _is_migration_mode() THEN RETURN NEW; END IF;
   IF (TG_OP = 'UPDATE' AND OLD.full_name IS DISTINCT FROM NEW.full_name) THEN
     UPDATE courses SET created_by = NEW.full_name WHERE teacher_email = NEW.email;
   END IF;
@@ -826,6 +842,7 @@ FOR EACH ROW EXECUTE PROCEDURE tr_update_courses_teacher_name();
 
 CREATE OR REPLACE FUNCTION tr_sync_course_children_owner() RETURNS TRIGGER AS $$
 BEGIN
+  IF _is_migration_mode() THEN RETURN NEW; END IF;
   IF (TG_OP = 'UPDATE' AND OLD.teacher_email IS DISTINCT FROM NEW.teacher_email) THEN
     UPDATE assignments SET teacher_email = NEW.teacher_email WHERE course_id = NEW.id;
     UPDATE quizzes SET teacher_email = NEW.teacher_email WHERE course_id = NEW.id;
@@ -853,7 +870,7 @@ FOR EACH ROW EXECUTE PROCEDURE tr_sync_course_children_owner();
 
 CREATE OR REPLACE FUNCTION tr_inherit_course_data() RETURNS TRIGGER AS $$
 BEGIN
-  IF is_admin() THEN RETURN NEW; END IF;
+  IF _is_migration_mode() THEN RETURN NEW; END IF;
   -- 1. Populate course_id from parent assessments/classes if missing
   IF NEW.course_id IS NULL THEN
     IF TG_TABLE_NAME = 'submissions' THEN
@@ -931,8 +948,8 @@ DECLARE
     v_due_date TIMESTAMP WITH TIME ZONE;
     v_allow_late BOOLEAN;
 BEGIN
-    -- Bypass check for admins to allow data restoration and historical record management
-    IF is_admin() THEN
+    -- Bypass check for migration mode to allow data restoration and historical record management
+    IF _is_migration_mode() THEN
         RETURN NEW;
     END IF;
 
@@ -968,8 +985,8 @@ DECLARE
     v_time_limit INTEGER;
     v_is_reconciling BOOLEAN := FALSE;
 BEGIN
-    -- Bypass check for admins to allow data restoration
-    IF is_admin() THEN
+    -- Bypass check for migration mode to allow data restoration
+    IF _is_migration_mode() THEN
         RETURN NEW;
     END IF;
 
@@ -1006,8 +1023,8 @@ DECLARE
     v_attempts_allowed INTEGER;
     v_next_attempt INTEGER;
 BEGIN
-    -- Bypass logic for admins during restoration, or if attempt_number is already provided
-    IF is_admin() OR NEW.attempt_number IS NOT NULL THEN
+    -- Bypass logic for migration mode during restoration, or if attempt_number is already provided
+    IF _is_migration_mode() OR NEW.attempt_number IS NOT NULL THEN
         RETURN NEW;
     END IF;
 
@@ -1123,6 +1140,7 @@ DECLARE
     v_level TEXT;
     v_tip TEXT;
 BEGIN
+    IF _is_migration_mode() THEN RETURN NEW; END IF;
     -- Only run when reset_request is present and transitioning to 'pending'
     IF NEW.reset_request IS NOT NULL AND
        (OLD.reset_request IS NULL OR OLD.reset_request->>'status' IS DISTINCT FROM 'pending') AND
@@ -1584,6 +1602,7 @@ DECLARE
     v_invite JSONB;
 BEGIN
     -- 0. Server-side Validation
+    p_email := lower(trim(p_email));
     IF NOT validate_email_format(p_email) THEN
         RETURN jsonb_build_object('success', false, 'message', 'Invalid email format');
     END IF;
@@ -2069,8 +2088,8 @@ DECLARE
   v_read_broadcasts JSONB;
   v_user_email VARCHAR;
 BEGIN
-    -- Bypass cleanup during admin-led restoration
-    IF is_admin() THEN
+    -- Bypass cleanup during migration mode
+    IF _is_migration_mode() THEN
         RETURN NULL;
     END IF;
 
