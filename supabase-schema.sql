@@ -2233,21 +2233,21 @@ BEGIN
 
     IF v_user_email IS NOT NULL THEN
         v_alerted_ids := (
-            SELECT COALESCE(jsonb_agg(id), '[]'::jsonb)
-            FROM users, jsonb_array_elements_text(metadata->'alerted_ids') id
-            WHERE email = v_user_email AND id::uuid IN (SELECT id FROM notifications UNION SELECT id FROM broadcasts)
+            SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+            FROM users, jsonb_array_elements_text(metadata->'alerted_ids') elem
+            WHERE email = v_user_email AND elem::uuid IN (SELECT id FROM notifications UNION SELECT id FROM broadcasts)
         );
 
         v_cleared_broadcasts := (
-            SELECT COALESCE(jsonb_agg(id), '[]'::jsonb)
-            FROM users, jsonb_array_elements_text(metadata->'cleared_broadcasts') id
-            WHERE email = v_user_email AND id::uuid IN (SELECT id FROM broadcasts)
+            SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+            FROM users, jsonb_array_elements_text(metadata->'cleared_broadcasts') elem
+            WHERE email = v_user_email AND elem::uuid IN (SELECT id FROM broadcasts)
         );
 
         v_read_broadcasts := (
-            SELECT COALESCE(jsonb_agg(id), '[]'::jsonb)
-            FROM users, jsonb_array_elements_text(metadata->'read_broadcasts') id
-            WHERE email = v_user_email AND id::uuid IN (SELECT id FROM broadcasts)
+            SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+            FROM users, jsonb_array_elements_text(metadata->'read_broadcasts') elem
+            WHERE email = v_user_email AND elem::uuid IN (SELECT id FROM broadcasts)
         );
 
         -- Final safety: ensure we never nullify metadata via builder if queries return no rows (though subqueries with COALESCE handle this)
@@ -2353,6 +2353,7 @@ END $$;
 DROP POLICY IF EXISTS "Secrets: No Public Access" ON user_secrets;
 DROP POLICY IF EXISTS "Secrets: Admin Manage" ON user_secrets;
 CREATE POLICY "Secrets: No Public Access" ON user_secrets FOR ALL USING (false);
+CREATE POLICY "Secrets: Admin Manage" ON user_secrets FOR ALL USING (is_admin());
 
 -- 1. Users Table
 DROP POLICY IF EXISTS "Users: Select" ON users;

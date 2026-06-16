@@ -16,6 +16,7 @@ const BACKUP_CONFIG = {
     // Topological order for safe restoration (FK-aware)
     tables: [
         { name: 'users', onConflict: 'email', orderBy: 'email', dependencies: [] },
+        { name: 'user_secrets', onConflict: 'email', orderBy: 'email', dependencies: [{ table: 'users', field: 'email' }] },
         { name: 'maintenance', onConflict: 'id', orderBy: 'id', dependencies: [] },
         { name: 'support_tickets', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'users', field: 'user_email', optional: true }] },
         { name: 'invites', onConflict: 'token', orderBy: 'token', dependencies: [{ table: 'users', field: 'created_by' }] },
@@ -1992,7 +1993,7 @@ class BackupAuditManager {
         return fixedCount;
     }
 
-    static formatReport(issues) {
+    static formatReport(issues, backupData = null) {
         if (issues.length === 0) return 'No integrity issues found.';
 
         const groups = {};
@@ -2006,7 +2007,25 @@ class BackupAuditManager {
             report += `**Table: ${table}** (${groups[table].length} issues)\n`;
             groups[table].slice(0, 10).forEach(issue => {
                 const prefix = issue.isOptional ? '[AUTO-FIXABLE] ' : '[FATAL] ';
-                let id = issue.recordId || issue.recordEmail || issue.recordToken;
+
+                // Advanced record identification for various table structures
+                let record = null;
+                if (backupData?.tables?.[issue.table]) {
+                    record = backupData.tables[issue.table].find(r =>
+                        (issue.recordId && r.id === issue.recordId) ||
+                        (issue.recordEmail && r.email === issue.recordEmail) ||
+                        (issue.recordToken && r.token === issue.recordToken)
+                    );
+                }
+
+                let id = null;
+                if (record) {
+                    id = record.email || record.token || record.student_email || record.user_email || record.teacher_email || record.title || record.id;
+                }
+                if (!id) {
+                    id = issue.recordId || issue.recordEmail || issue.recordToken;
+                }
+
                 if (!id && issue.type === 'MISSING_TABLE') id = 'TABLE_MISSING';
                 id = id || 'unknown';
                 report += `- ${prefix}[${id}] ${issue.message}\n`;
@@ -2045,15 +2064,25 @@ async function exportBackup() {
 
     // Align with strictly requested format and table order as per user JSON
     const requestedOrder = [
-        'assignments', 'maintenance', 'users', 'lessons', 'topics', 'invites',
+        'assignments', 'maintenance', 'users', 'user_secrets', 'lessons', 'topics', 'invites',
         'courses', 'quizzes', 'materials', 'support_tickets', 'enrollments',
         'planner', 'live_classes', 'notifications', 'broadcasts', 'submissions',
         'attendance', 'discussions', 'study_sessions', 'certificates',
         'quiz_submissions', 'violations'
     ];
     const orderedTables = {};
+    // 1. First, include requested tables in specific order
     requestedOrder.forEach(tableName => {
-        orderedTables[tableName] = backupData.tables[tableName] || [];
+        if (Object.prototype.hasOwnProperty.call(backupData.tables, tableName)) {
+            orderedTables[tableName] = backupData.tables[tableName];
+        }
+    });
+    // 2. Then, include any other tables present in backupData but NOT in requestedOrder
+    // This ensures no data is lost even if requestedOrder is incomplete.
+    Object.keys(backupData.tables).forEach(tableName => {
+        if (!orderedTables[tableName]) {
+            orderedTables[tableName] = backupData.tables[tableName];
+        }
     });
     backupData.tables = orderedTables;
 
@@ -2063,7 +2092,7 @@ async function exportBackup() {
 
     if (issues.length > 0) {
         UI.hideLoading('mgt-area');
-        const report = BackupAuditManager.formatReport(issues);
+        const report = BackupAuditManager.formatReport(issues, backupData);
         console.warn('Backup audit failed:', issues);
 
         const confirmRestore = await new Promise(resolve => {
