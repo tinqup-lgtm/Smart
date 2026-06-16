@@ -1,17 +1,23 @@
 /**
  * Configuration for system-wide backups and restorations.
- * Note: 'onConflict' targets 'id' for tables with surrogate primary keys to ensure
- * administrative restorations correctly overwrite existing records, avoiding PK violations.
- * Tables without surrogate IDs (e.g., 'enrollments') use their natural composite keys.
+ *
+ * REFERENTIAL INTEGRITY & ORDERING:
+ * - Restoration Order: Defined by the sequence in BACKUP_CONFIG.tables. This follows a strict
+ *   topological sort (parents before children) to satisfy foreign key constraints.
+ * - Export Order: Defined by 'requestedOrder' in exportBackup(), matching the user-requested JSON format.
+ *
+ * CONFLICT RESOLUTION & REMAPPING:
+ * - 'onConflict' targets 'id' for most tables to preserve UUID-based relationships.
+ * - For natural-key tables (e.g., 'users' via email), surrogate 'id' is stripped during import
+ *   to allow seamless updates of existing records and clean insertion of new ones without collisions.
  */
 const BACKUP_CONFIG = {
     version: '1.1.1',
-    // Tables are ordered here by dependency to ensure safe restoration.
-    // Re-ordering for the requested export format is handled in exportBackup().
+    // Topological order for safe restoration (FK-aware)
     tables: [
         { name: 'users', onConflict: 'email', orderBy: 'email', dependencies: [] },
         { name: 'maintenance', onConflict: 'id', orderBy: 'id', dependencies: [] },
-        { name: 'support_tickets', onConflict: 'id', orderBy: 'created_at', dependencies: [] },
+        { name: 'support_tickets', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'users', field: 'user_email', optional: true }] },
         { name: 'invites', onConflict: 'token', orderBy: 'token', dependencies: [{ table: 'users', field: 'created_by' }] },
         { name: 'courses', onConflict: 'id', orderBy: 'id', dependencies: [{ table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'live_classes', onConflict: 'id', orderBy: 'start_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
@@ -2037,13 +2043,13 @@ async function exportBackup() {
         }
     }
 
-    // Align with strictly requested format and table order
+    // Align with strictly requested format and table order as per user JSON
     const requestedOrder = [
-        'invites', 'courses', 'live_classes', 'planner', 'notifications', 'support_tickets',
-        'maintenance', 'users', 'assignments', 'materials', 'attendance',
-        'study_sessions', 'submissions', 'quiz_submissions', 'broadcasts',
-        'violations', 'certificates', 'enrollments', 'discussions', 'lessons',
-        'quizzes', 'topics'
+        'assignments', 'maintenance', 'users', 'lessons', 'topics', 'invites',
+        'courses', 'quizzes', 'materials', 'support_tickets', 'enrollments',
+        'planner', 'live_classes', 'notifications', 'broadcasts', 'submissions',
+        'attendance', 'discussions', 'study_sessions', 'certificates',
+        'quiz_submissions', 'violations'
     ];
     const orderedTables = {};
     requestedOrder.forEach(tableName => {
