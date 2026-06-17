@@ -2572,9 +2572,11 @@ DROP POLICY IF EXISTS "Notifications: User Access" ON notifications;
 DROP POLICY IF EXISTS "Notifications: SELECT" ON notifications;
 DROP POLICY IF EXISTS "Notifications: UPDATE" ON notifications;
 DROP POLICY IF EXISTS "Notifications: DELETE" ON notifications;
+DROP POLICY IF EXISTS "Notifications: Admin Manage" ON notifications;
 CREATE POLICY "Notifications: SELECT" ON notifications FOR SELECT USING (is_admin() OR user_email = get_auth_email());
 CREATE POLICY "Notifications: UPDATE" ON notifications FOR UPDATE USING (user_email = get_auth_email()) WITH CHECK (user_email = get_auth_email());
 CREATE POLICY "Notifications: DELETE" ON notifications FOR DELETE USING (is_admin() OR user_email = get_auth_email());
+CREATE POLICY "Notifications: Admin Manage" ON notifications FOR ALL USING (is_admin());
 
 -- 14. Broadcasts Table
 DROP POLICY IF EXISTS "Broadcasts: Access" ON broadcasts;
@@ -2691,6 +2693,8 @@ DROP POLICY IF EXISTS "Support Tickets: Admin Update" ON support_tickets;
 CREATE POLICY "Support Tickets: Admin Update" ON support_tickets FOR UPDATE USING (is_admin());
 DROP POLICY IF EXISTS "Support Tickets: Admin Delete" ON support_tickets;
 CREATE POLICY "Support Tickets: Admin Delete" ON support_tickets FOR DELETE USING (is_admin());
+DROP POLICY IF EXISTS "Support Tickets: Admin Manage" ON support_tickets;
+CREATE POLICY "Support Tickets: Admin Manage" ON support_tickets FOR ALL USING (is_admin());
 
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, postgres, service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, postgres, service_role;
