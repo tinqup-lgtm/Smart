@@ -325,7 +325,7 @@ class SupabaseDB {
                 .in('course_id', courseIds);
 
             if (searchTerm) {
-                query = query.or(`users.full_name.ilike.%${searchTerm}%,users.email.ilike.%${searchTerm}%`);
+                query = query.or(`full_name.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%`, { foreignTable: 'users' });
             }
 
             const { data, count, error } = await query
