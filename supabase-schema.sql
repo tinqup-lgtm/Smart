@@ -403,7 +403,7 @@ CREATE TABLE IF NOT EXISTS broadcasts (
 );
 
 CREATE TABLE IF NOT EXISTS maintenance (
-  id UUID PRIMARY KEY DEFAULT '00000000-0000-0000-0000-000000000000' CHECK (id = '00000000-0000-0000-0000-000000000000'),
+  id UUID PRIMARY KEY DEFAULT '00000000-0000-0000-0000-000000000000',
   enabled BOOLEAN DEFAULT FALSE,
   manual_until TIMESTAMP WITH TIME ZONE,
   message TEXT DEFAULT 'System is undergoing maintenance.',
@@ -504,6 +504,9 @@ BEGIN
     ALTER TABLE users ADD CONSTRAINT users_email_check CHECK (validate_email_format(email));
 
     ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
+
+    -- Maintenance ID constraint cleanup for production-readiness
+    ALTER TABLE maintenance DROP CONSTRAINT IF EXISTS maintenance_id_check;
 
     -- Case-Insensitive Email Constraints for existing tables
     BEGIN
@@ -2569,9 +2572,11 @@ DROP POLICY IF EXISTS "Notifications: User Access" ON notifications;
 DROP POLICY IF EXISTS "Notifications: SELECT" ON notifications;
 DROP POLICY IF EXISTS "Notifications: UPDATE" ON notifications;
 DROP POLICY IF EXISTS "Notifications: DELETE" ON notifications;
+DROP POLICY IF EXISTS "Notifications: Admin Manage" ON notifications;
 CREATE POLICY "Notifications: SELECT" ON notifications FOR SELECT USING (is_admin() OR user_email = get_auth_email());
 CREATE POLICY "Notifications: UPDATE" ON notifications FOR UPDATE USING (user_email = get_auth_email()) WITH CHECK (user_email = get_auth_email());
 CREATE POLICY "Notifications: DELETE" ON notifications FOR DELETE USING (is_admin() OR user_email = get_auth_email());
+CREATE POLICY "Notifications: Admin Manage" ON notifications FOR ALL USING (is_admin());
 
 -- 14. Broadcasts Table
 DROP POLICY IF EXISTS "Broadcasts: Access" ON broadcasts;
@@ -2688,6 +2693,8 @@ DROP POLICY IF EXISTS "Support Tickets: Admin Update" ON support_tickets;
 CREATE POLICY "Support Tickets: Admin Update" ON support_tickets FOR UPDATE USING (is_admin());
 DROP POLICY IF EXISTS "Support Tickets: Admin Delete" ON support_tickets;
 CREATE POLICY "Support Tickets: Admin Delete" ON support_tickets FOR DELETE USING (is_admin());
+DROP POLICY IF EXISTS "Support Tickets: Admin Manage" ON support_tickets;
+CREATE POLICY "Support Tickets: Admin Manage" ON support_tickets FOR ALL USING (is_admin());
 
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, postgres, service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, postgres, service_role;
