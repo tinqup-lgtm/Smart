@@ -630,28 +630,72 @@ async function showAssignmentForm(assignmentId) {
   const submissionAnswers = submission?.answers || {};
 
   (a.questions || []).forEach((q, idx) => {
-    const qDiv = document.createElement('div'); qDiv.className = 'question';
-    const answer = submissionAnswers[idx] || '';
-    let inputHtml = '';
-    if (q.type === 'essay') {
-      inputHtml = `<textarea class="input" rows="6" placeholder="Your answer" data-q-idx="${idx}">${escapeHtml(answer)}</textarea>`;
-    } else if (q.type === 'file') {
-      inputHtml = `
-        <div class="small">Upload File ${q.extensions ? `(${escapeHtml(q.extensions)})` : ''}:</div>
-        <input type="file" class="input q-file" data-q-idx="${idx}" accept="${q.extensions || '*'}" onchange="previewFile(this, '${idx}')">
-        <div id="preview-${idx}" style="margin-top:8px">
-          ${answer ? `<button type="button" class="button secondary tiny w-auto" onclick="UI.viewFile('${escapeAttr(answer)}', 'Current Submission')">View Current File</button>` : '<span class="small">No file uploaded</span>'}
-        </div>
-      `;
-    } else if (q.type === 'link') {
-      inputHtml = `<div class="small">Submission Link:</div><input type="url" class="input q-link" placeholder="https://..." data-q-idx="${idx}" value="${escapeHtml(answer)}">`;
+    const qDiv = document.createElement('div');
+    qDiv.className = 'question mb-30';
+    qDiv.id = `question-${idx}`;
+
+    const allowedTypes = q.types || (q.type ? [q.type] : []);
+    const answerObj = submissionAnswers[idx];
+    const legacyAnswer = typeof answerObj === 'string' ? answerObj : null;
+    const activeType = (typeof answerObj === 'object' && answerObj?.type) ? answerObj.type : (legacyAnswer ? (q.type || allowedTypes[0]) : allowedTypes[0]);
+    const activeValue = (typeof answerObj === 'object') ? (answerObj?.value || '') : (legacyAnswer || '');
+
+    qDiv.setAttribute('data-active-type', activeType);
+
+    let switcherHtml = '';
+    if (allowedTypes.length > 1) {
+        switcherHtml = `
+            <div class="flex gap-10 mb-15">
+                <span class="tiny bold text-muted uppercase">Method:</span>
+                ${allowedTypes.map(t => `
+                    <button type="button" class="button tiny w-auto q-type-btn ${activeType === t ? '' : 'secondary'}"
+                            data-type="${t}" onclick="switchSubmissionType(${idx}, '${t}')">
+                        ${t === 'essay' ? 'Essay' : t === 'file' ? 'File' : 'Link'}
+                    </button>
+                `).join('')}
+            </div>
+        `;
     }
+
+    const essayHtml = `
+        <div class="q-input-wrapper" data-type="essay" style="${activeType === 'essay' ? '' : 'display:none'}">
+            <textarea class="input q-essay" rows="6" placeholder="Your answer" data-q-idx="${idx}">${activeType === 'essay' ? escapeHtml(activeValue) : ''}</textarea>
+        </div>
+    `;
+
+    const fileHtml = `
+        <div class="q-input-wrapper" data-type="file" style="${activeType === 'file' ? '' : 'display:none'}">
+            <div class="small mb-5">Upload File ${q.extensions ? `(${escapeHtml(q.extensions)})` : ''}:</div>
+            <input type="file" class="input q-file" data-q-idx="${idx}" accept="${q.extensions || '*'}" onchange="previewFile(this, '${idx}')">
+            <div id="preview-${idx}" class="mt-8">
+                ${(activeType === 'file' && activeValue) ? `<button type="button" class="button secondary tiny w-auto" onclick="UI.viewFile('${escapeAttr(activeValue)}', 'Current Submission')">View Current File</button>` : '<span class="small text-muted italic">No file uploaded</span>'}
+            </div>
+        </div>
+    `;
+
+    const linkHtml = `
+        <div class="q-input-wrapper" data-type="link" style="${activeType === 'link' ? '' : 'display:none'}">
+            <div class="small mb-5">Submission Link:</div>
+            <input type="url" class="input q-link" placeholder="https://..." data-q-idx="${idx}" value="${activeType === 'link' ? escapeHtml(activeValue) : ''}">
+        </div>
+    `;
+
+    let inputsHtml = '';
+    allowedTypes.forEach(t => {
+        if (t === 'essay') inputsHtml += essayHtml;
+        else if (t === 'file') inputsHtml += fileHtml;
+        else if (t === 'link') inputsHtml += linkHtml;
+    });
+
     qDiv.innerHTML = `
       <div class="flex-between mb-10">
         <div class="bold">Q${idx + 1}. ${UI.renderRichText(q.text || '')}</div>
         <div class="badge badge-lock">${q.points || 0} pts</div>
       </div>
-      ${inputHtml}
+      ${switcherHtml}
+      <div class="q-inputs-container mt-10">
+        ${inputsHtml}
+      </div>
     `;
     qwrap.appendChild(qDiv);
   });
@@ -661,8 +705,29 @@ async function showAssignmentForm(assignmentId) {
 window.previewFile = function(input, idx) {
   const preview = document.getElementById(`preview-${idx}`);
   if (input.files && input.files[0]) {
-    preview.innerHTML = `<span class="small">Selected: ${escapeHtml(input.files[0].name)}</span>`;
+    preview.innerHTML = `<span class="small bold text-success">Selected: ${escapeHtml(input.files[0].name)}</span>`;
   }
+};
+
+window.switchSubmissionType = function(qIdx, type) {
+    const qDiv = document.getElementById(`question-${qIdx}`);
+    if (!qDiv) return;
+
+    qDiv.setAttribute('data-active-type', type);
+
+    // Update buttons
+    qDiv.querySelectorAll('.q-type-btn').forEach(btn => {
+        if (btn.getAttribute('data-type') === type) {
+            btn.classList.remove('secondary');
+        } else {
+            btn.classList.add('secondary');
+        }
+    });
+
+    // Update visibility
+    qDiv.querySelectorAll('.q-input-wrapper').forEach(wrapper => {
+        wrapper.style.display = wrapper.getAttribute('data-type') === type ? 'block' : 'none';
+    });
 };
 
 async function viewFeedback(assignmentId) {
@@ -721,10 +786,25 @@ async function viewFeedback(assignmentId) {
         <h4>Your Submission & Grades</h4>
         <div class="mt-15">
           ${(assignment.questions || []).map((q, idx) => {
-            const answer = submission.answers[idx];
+            const answerObj = submission.answers[idx];
+            const isStructured = typeof answerObj === 'object' && answerObj !== null && answerObj.type;
+            const type = isStructured ? answerObj.type : (typeof answerObj === 'string' && isValidUrl(answerObj) ? 'file' : 'essay');
+            const value = isStructured ? answerObj.value : answerObj;
+
             const score = submission.question_scores?.[idx] || 0;
-            const isUrl = typeof answer === 'string' && isValidUrl(answer);
-            const displayAnswer = answer ? (isUrl ? `<button type="button" class="button secondary small w-auto" onclick="UI.viewFile('${escapeAttr(answer)}', 'Question ${idx + 1} Submission')">View Submitted File/Link</button>` : `<div class="small p-10 mt-5" style="background: #f7fafc; border-radius: 4px;">${UI.renderRichText(answer)}</div>`) : '<div class="small p-10 mt-5 text-muted italic">No answer provided.</div>';
+
+            let displayAnswer = '<div class="small p-10 mt-5 text-muted italic">No answer provided.</div>';
+            if (value) {
+                if (type === 'essay') {
+                    displayAnswer = `<div class="small p-10 mt-5" style="background: #f7fafc; border-radius: 4px;">${UI.renderRichText(value)}</div>`;
+                } else {
+                    displayAnswer = `<div class="mt-5 flex gap-10">
+                        <span class="badge badge-purple tiny">${type.toUpperCase()}</span>
+                        <button type="button" class="button secondary small w-auto" onclick="UI.viewFile('${escapeAttr(value)}', 'Question ${idx + 1} Submission')">View Submitted ${type === 'link' ? 'Link' : 'File'}</button>
+                    </div>`;
+                }
+            }
+
             return `<div class="list-item mb-20 card border-light">
               <div class="flex-between">
                 <div class="bold">Question ${idx + 1}: ${UI.renderRichText(q.text)}</div>
@@ -2701,11 +2781,13 @@ async function submitAssignment(assignmentId, studentEmail, isDraft = false) {
   const capturedAnswers = [];
   for (let idx = 0; idx < questions.length; idx++) {
       const qDiv = questions[idx];
-      const essay = qDiv.querySelector('textarea');
+      const activeType = qDiv.getAttribute('data-active-type');
+      const essay = qDiv.querySelector('.q-essay');
       const link = qDiv.querySelector('.q-link');
       const fileInput = qDiv.querySelector('.q-file');
 
       capturedAnswers.push({
+          activeType,
           essay: essay ? essay.value.trim() : null,
           link: link ? link.value.trim() : null,
           file: fileInput ? fileInput.files[0] : null
@@ -2723,34 +2805,43 @@ async function submitAssignment(assignmentId, studentEmail, isDraft = false) {
 
     for (let idx = 0; idx < capturedAnswers.length; idx++) {
       const captured = capturedAnswers[idx];
+      const activeType = captured.activeType;
 
-      if (captured.essay !== null) {
-        answers[idx] = captured.essay;
-      } else if (captured.link !== null) {
-        if (!isDraft && captured.link && !isValidUrl(captured.link)) {
-            throw new Error(`Invalid URL for Question ${idx + 1}. Please start with http:// or https://`);
-        }
-        answers[idx] = captured.link;
-      } else if (captured.file) {
-          const file = captured.file;
-          const path = `submissions/${assignmentId}/${studentEmail}/${idx}_${Date.now()}_${file.name}`;
-          await SupabaseDB.uploadFile('assignments', path, file);
-          if (renderId !== window.currentRenderId) return;
-          answers[idx] = await SupabaseDB.getPublicUrl('assignments', path);
-          if (renderId !== window.currentRenderId) return;
-      } else if (!isDraft && questions[idx].querySelector('.q-file') && !answers[idx]) {
-          // If it's a file question, not a draft, and no existing file URL or newly selected file
-          throw new Error(`Question ${idx + 1} requires a file upload.`);
+      let value = null;
+      if (activeType === 'essay') {
+          value = captured.essay;
+      } else if (activeType === 'link') {
+          if (!isDraft && captured.link && !isValidUrl(captured.link)) {
+              throw new Error(`Invalid URL for Question ${idx + 1}. Please start with http:// or https://`);
+          }
+          value = captured.link;
+      } else if (activeType === 'file') {
+          if (captured.file) {
+              const file = captured.file;
+              const path = `submissions/${assignmentId}/${studentEmail}/${idx}_${Date.now()}_${file.name}`;
+              await SupabaseDB.uploadFile('assignments', path, file);
+              if (renderId !== window.currentRenderId) return;
+              value = await SupabaseDB.getPublicUrl('assignments', path);
+              if (renderId !== window.currentRenderId) return;
+          } else {
+              // Fallback to existing value if it was already a file URL for this type
+              const current = answers[idx];
+              if (current && typeof current === 'object' && current.type === 'file') {
+                  value = current.value;
+              } else if (typeof current === 'string' && isValidUrl(current)) {
+                  value = current; // Legacy support
+              }
+          }
       }
+
+      if (!isDraft && (!value || value === '')) {
+          throw new Error(`Question ${idx + 1} is empty. Please provide an answer.`);
+      }
+
+      answers[idx] = { type: activeType, value: value };
     }
 
-    // Validation: Ensure at least one answer is provided if submitting
-    if (!isDraft) {
-        const hasAnyContent = Object.values(answers).some(val => val && String(val).trim() !== '');
-        if (!hasAnyContent) {
-            throw new Error('Cannot submit an empty assignment. Please provide at least one answer.');
-        }
-    }
+    // "No empty submission" is already enforced above by throwing error for any empty question.
 
     const submission = {
       ...existing,

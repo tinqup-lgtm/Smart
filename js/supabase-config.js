@@ -669,12 +669,17 @@ class SupabaseDB {
     }
 
     static async saveSubmission(submission) {
-        // Use 'id' as onConflict if present to support administrative restoration/updates,
-        // otherwise fallback to the natural composite key for standard student submissions.
-        const onConflict = submission.id ? 'id' : 'assignment_id,student_email';
-        const data = await this._upsert('submissions', submission, onConflict);
+        let data;
+        if (submission.id) {
+            // Use _update instead of _upsert when id is present to avoid 401 errors
+            // for users (like teachers) who have UPDATE but not INSERT permissions.
+            data = await this._update('submissions', submission, { id: submission.id });
+        } else {
+            // Initial student submission
+            data = await this._upsert('submissions', submission, 'assignment_id,student_email');
+        }
         _cache.invalidate('submissions');
-        return data?.[0];
+        return data?.[0] || null;
     }
 
     static async deleteSubmission(assignmentId, studentEmail) {

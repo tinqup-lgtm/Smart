@@ -886,11 +886,19 @@ function addQuestionField(q = null) {
         <textarea id="${qId}" class="q-text" placeholder="Enter question description here..." required style="display:none">${q ? escapeHtml(q.text) : ''}</textarea>
       </div>
       <div class="grid-2">
-        <div><label>Submission Type:</label><select class="q-type" onchange="toggleTeacherAssignmentType(this)"><option value="essay" ${q?.type === 'essay' ? 'selected' : ''}>Essay Text</option><option value="file" ${q?.type === 'file' ? 'selected' : ''}>File Upload (PDF, Docx, etc.)</option><option value="link" ${q?.type === 'link' ? 'selected' : ''}>Link Submission</option></select></div>
-        <div><label>Question Points:</label><input type="number" class="q-points" value="${q ? q.points : 10}" min="0"></div>
+        <div>
+          <label class="bold small">Submission Types (select at least one):</label>
+          <div class="flex gap-15 mt-5 flex-wrap">
+            <label class="flex-center-y gap-5 tiny pointer"><input type="checkbox" class="q-type-checkbox" value="essay" ${ (q?.types?.includes('essay') || q?.type === 'essay') ? 'checked' : '' }> Essay</label>
+            <label class="flex-center-y gap-5 tiny pointer"><input type="checkbox" class="q-type-checkbox" value="file" ${ (q?.types?.includes('file') || q?.type === 'file') ? 'checked' : '' } onchange="toggleTeacherAssignmentType(this)"> File</label>
+            <label class="flex-center-y gap-5 tiny pointer"><input type="checkbox" class="q-type-checkbox" value="link" ${ (q?.types?.includes('link') || q?.type === 'link') ? 'checked' : '' }> Link</label>
+          </div>
+        </div>
+        <div><label class="bold small">Question Points:</label><input type="number" class="q-points" value="${q ? q.points : 10}" min="0"></div>
       </div>
-      <div class="q-type-ext mt-10">
-        ${q?.type === 'file' ? `<label>Allowed Extensions (comma-separated):</label><input type="text" class="q-ext" placeholder=".pdf, .docx, .csv, .jpg" value="${q.extensions || ''}">` : ''}
+      <div class="q-type-ext mt-10" style="${ (q?.types?.includes('file') || q?.type === 'file') ? '' : 'display:none' }">
+        <label class="small">Allowed Extensions (comma-separated):</label>
+        <input type="text" class="q-ext" placeholder=".pdf, .docx, .csv, .jpg" value="${q?.extensions || ''}">
       </div>
     </div>
   `;
@@ -1002,14 +1010,6 @@ async function showAssignmentForm(assignment = null, courseId = null) {
     </div>
   `;
   UI.createRTE('assignmentDescription');
-  const toggleTeacherAssignmentType = (select) => {
-    const container = select.parentElement.parentElement.parentElement.querySelector('.q-type-ext');
-    if (select.value === 'file') {
-      container.innerHTML = `<label>Allowed Extensions (comma-separated):</label><input type="text" class="q-ext" placeholder=".pdf, .docx, .csv, .jpg" value="">`;
-    } else {
-      container.innerHTML = '';
-    }
-  };
   if (isEdit && assignment.questions) { assignment.questions.forEach(q => addQuestionField(q)); }
   updateACPreview();
 
@@ -1057,16 +1057,29 @@ async function showAssignmentForm(assignment = null, courseId = null) {
     try {
       const user = await SessionManager.getCurrentUser();
       const questions = [];
-      document.querySelectorAll('#questionsContainer .question').forEach(item => {
+      let questionError = null;
+      document.querySelectorAll('#questionsContainer .question').forEach((item, idx) => {
+        const selectedTypes = Array.from(item.querySelectorAll('.q-type-checkbox:checked')).map(cb => cb.value);
+        if (selectedTypes.length === 0) {
+            questionError = `Question ${idx + 1} must have at least one submission type selected.`;
+        }
+
         const q = {
           text: item.querySelector('.q-text').value,
-          type: item.querySelector('.q-type').value,
+          types: selectedTypes,
           points: parseInt(item.querySelector('.q-points').value) || 0
         };
         const extInput = item.querySelector('.q-ext');
         if (extInput) q.extensions = extInput.value;
         questions.push(q);
       });
+
+      if (questionError) {
+          UI.showNotification(questionError, 'warn');
+          btn.disabled = false;
+          btn.textContent = originalText;
+          return;
+      }
       const allowedExt = document.getElementById('allowedExtensions').value.split(',').map(e => e.trim().toLowerCase()).filter(e => e);
       const selCourseId = document.getElementById('assignmentCourseId').value;
       const acConfig = JSON.parse(document.getElementById('antiCheatConfigData').value || '{}');
@@ -1196,10 +1209,25 @@ async function gradeSubmission(assignmentId, studentEmail) {
           <h4 class="m-0">Submitted Answers & Individual Scoring:</h4>
           <div class="mt-15">
             ${(assignment.questions || []).map((q, idx) => {
-              const answer = submissionAnswers[idx];
+              const answerObj = submissionAnswers[idx];
+              const isStructured = typeof answerObj === 'object' && answerObj !== null && answerObj.type;
+              const type = isStructured ? answerObj.type : (typeof answerObj === 'string' && isValidUrl(answerObj) ? 'file' : 'essay');
+              const value = isStructured ? answerObj.value : answerObj;
+
               const score = submission?.question_scores?.[idx] ?? (submission?.status === 'graded' ? 0 : null);
-              const isUrl = typeof answer === 'string' && (answer.startsWith('http://') || answer.startsWith('https://'));
-              const displayAnswer = answer ? (isUrl ? `<button type="button" class="button secondary small w-auto" onclick="UI.viewFile('${escapeAttr(answer)}', 'Student Submission - Q${idx+1}')">View Submitted File/Link</button>` : `<div class="small p-10 mt-5" style="background: #f7fafc; border-radius: 4px;">${UI.renderRichText(answer)}</div>`) : '<div class="small p-10 mt-5 text-muted italic">No answer provided.</div>';
+
+              let displayAnswer = '<div class="small p-10 mt-5 text-muted italic">No answer provided.</div>';
+              if (value) {
+                  if (type === 'essay') {
+                      displayAnswer = `<div class="small p-10 mt-5" style="background: #f7fafc; border-radius: 4px;">${UI.renderRichText(value)}</div>`;
+                  } else {
+                      displayAnswer = `<div class="mt-5 flex gap-10">
+                        <span class="badge badge-purple tiny">${type.toUpperCase()}</span>
+                        <button type="button" class="button secondary small w-auto" onclick="UI.viewFile('${escapeAttr(value)}', 'Student Submission - Q${idx+1}')">View Submitted ${type === 'link' ? 'Link' : 'File'}</button>
+                      </div>`;
+                  }
+              }
+
               return `<div class="list-item mb-20 card border-light">
                 <div class="bold mb-5">Question ${idx + 1}: ${UI.renderRichText(q.text)}</div>
                 <div class="mt-5">${displayAnswer}</div>
@@ -3215,12 +3243,10 @@ async function filterGradeBook() {
     }
 }
 
-window.toggleTeacherAssignmentType = (select) => {
-    const container = select.parentElement.parentElement.parentElement.querySelector('.q-type-ext');
-    if (select.value === 'file') {
-      container.innerHTML = `<label>Allowed Extensions (comma-separated):</label><input type="text" class="q-ext" placeholder=".pdf, .docx, .csv, .jpg" value="">`;
-    } else {
-      container.innerHTML = '';
+window.toggleTeacherAssignmentType = (checkbox) => {
+    const container = checkbox.closest('.question').querySelector('.q-type-ext');
+    if (container) {
+        container.style.display = checkbox.checked ? 'block' : 'none';
     }
 };
 window.addAssignmentLink = () => {
