@@ -1010,12 +1010,6 @@ async function showAssignmentForm(assignment = null, courseId = null) {
     </div>
   `;
   UI.createRTE('assignmentDescription');
-  const toggleTeacherAssignmentType = (checkbox) => {
-    const container = checkbox.closest('.question').querySelector('.q-type-ext');
-    if (container) {
-        container.style.display = checkbox.checked ? 'block' : 'none';
-    }
-  };
   if (isEdit && assignment.questions) { assignment.questions.forEach(q => addQuestionField(q)); }
   updateACPreview();
 
@@ -1217,7 +1211,7 @@ async function gradeSubmission(assignmentId, studentEmail) {
             ${(assignment.questions || []).map((q, idx) => {
               const answerObj = submissionAnswers[idx];
               const isStructured = typeof answerObj === 'object' && answerObj !== null && answerObj.type;
-              const type = isStructured ? answerObj.type : (typeof answerObj === 'string' && (answerObj.startsWith('http://') || answerObj.startsWith('https://')) ? 'file' : 'essay');
+              const type = isStructured ? answerObj.type : (typeof answerObj === 'string' && isValidUrl(answerObj) ? 'file' : 'essay');
               const value = isStructured ? answerObj.value : answerObj;
 
               const score = submission?.question_scores?.[idx] ?? (submission?.status === 'graded' ? 0 : null);
