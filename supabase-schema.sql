@@ -403,7 +403,7 @@ CREATE TABLE IF NOT EXISTS broadcasts (
 );
 
 CREATE TABLE IF NOT EXISTS maintenance (
-  id UUID PRIMARY KEY DEFAULT '00000000-0000-0000-0000-000000000000' CHECK (id = '00000000-0000-0000-0000-000000000000'),
+  id UUID PRIMARY KEY DEFAULT '00000000-0000-0000-0000-000000000000',
   enabled BOOLEAN DEFAULT FALSE,
   manual_until TIMESTAMP WITH TIME ZONE,
   message TEXT DEFAULT 'System is undergoing maintenance.',
@@ -504,6 +504,9 @@ BEGIN
     ALTER TABLE users ADD CONSTRAINT users_email_check CHECK (validate_email_format(email));
 
     ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
+
+    -- Maintenance ID constraint cleanup for production-readiness
+    ALTER TABLE maintenance DROP CONSTRAINT IF EXISTS maintenance_id_check;
 
     -- Case-Insensitive Email Constraints for existing tables
     BEGIN

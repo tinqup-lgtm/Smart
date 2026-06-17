@@ -1675,9 +1675,13 @@ class SupabaseDB {
         if (bypassCache) _cache.invalidate('maintenance');
         return _cache.fetch('maintenance', async () => {
             return this._request(async () => {
+                // Singleton robustness: multiple maintenance rows may exist after restoration
+                // We take the most recently updated one to ensure continuity.
                 const { data, error } = await supabaseClient
                     .from('maintenance')
                     .select('*')
+                    .order('updated_at', { ascending: false })
+                    .limit(1)
                     .maybeSingle();
                 if (error && error.code !== 'PGRST116') throw error;
                 return data || { enabled: false, schedules: [] };
