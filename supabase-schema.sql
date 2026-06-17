@@ -505,6 +505,9 @@ BEGIN
 
     ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS resolution_notes TEXT;
 
+    -- Maintenance ID constraint cleanup for production-readiness
+    ALTER TABLE maintenance DROP CONSTRAINT IF EXISTS maintenance_id_check;
+
     -- Case-Insensitive Email Constraints for existing tables
     BEGIN
         ALTER TABLE users ADD CONSTRAINT users_email_lower_check CHECK (email = LOWER(email));

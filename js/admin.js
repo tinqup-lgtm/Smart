@@ -16,13 +16,13 @@ const BACKUP_CONFIG = {
     // Topological order for safe restoration (FK-aware)
     tables: [
         { name: 'users', onConflict: 'email', orderBy: 'email', dependencies: [] },
-        { name: 'user_secrets', onConflict: 'email', orderBy: 'email', dependencies: [{ table: 'users', field: 'email' }] },
+        { name: 'user_secrets', optional: true, onConflict: 'email', orderBy: 'email', dependencies: [{ table: 'users', field: 'email' }] },
         { name: 'maintenance', onConflict: 'id', orderBy: 'id', dependencies: [] },
         { name: 'support_tickets', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'users', field: 'user_email', optional: true }] },
         { name: 'invites', onConflict: 'token', orderBy: 'token', dependencies: [{ table: 'users', field: 'created_by', optional: true }] },
         { name: 'courses', onConflict: 'id', orderBy: 'id', dependencies: [{ table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'live_classes', onConflict: 'id', orderBy: 'start_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
-        { name: 'planner', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'users', field: 'user_email' }] },
+        { name: 'planner', optional: true, onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'users', field: 'user_email' }] },
         { name: 'notifications', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'users', field: 'user_email' }] },
         { name: 'assignments', onConflict: 'id', orderBy: 'due_date', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'materials', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
@@ -34,7 +34,7 @@ const BACKUP_CONFIG = {
         { name: 'study_sessions', onConflict: 'id', orderBy: 'started_at', dependencies: [{ table: 'users', field: 'user_email' }, { table: 'courses', field: 'course_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'submissions', onConflict: 'assignment_id,student_email', orderBy: 'submitted_at', dependencies: [{ table: 'assignments', field: 'assignment_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }, { table: 'courses', field: 'course_id', optional: true }] },
         { name: 'quiz_submissions', onConflict: 'quiz_id,student_email,attempt_number', orderBy: 'started_at', dependencies: [{ table: 'quizzes', field: 'quiz_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }, { table: 'courses', field: 'course_id', optional: true }] },
-        { name: 'broadcasts', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id', optional: true }, { table: 'users', field: 'teacher_email', optional: true }] },
+        { name: 'broadcasts', optional: true, onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id', optional: true }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'violations', onConflict: 'id', orderBy: 'timestamp', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }, { table: ['assignments', 'quizzes'], field: 'assessment_id' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'certificates', onConflict: 'id', orderBy: 'issued_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'student_email' }, { table: 'users', field: 'teacher_email', optional: true }] },
         { name: 'discussions', onConflict: 'id', orderBy: 'created_at', dependencies: [{ table: 'courses', field: 'course_id' }, { table: 'users', field: 'user_email' }, { table: 'users', field: 'teacher_email', optional: true }, { table: 'discussions', field: 'parent_id', optional: true, self: true }] }
@@ -1891,7 +1891,7 @@ class BackupAuditManager {
                 tokens: new Set(data.map(r => r.token).filter(Boolean))
             };
 
-            if (!hasTable) {
+            if (!hasTable && !config.optional) {
                 issues.push({
                     table: config.name,
                     type: 'MISSING_TABLE',
@@ -2068,8 +2068,8 @@ async function exportBackup() {
     const requestedOrder = [
         'maintenance', 'submissions', 'lessons', 'courses', 'assignments', 'materials',
         'support_tickets', 'quizzes', 'topics', 'live_classes', 'notifications', 'users',
-        'user_secrets', 'enrollments', 'attendance', 'certificates', 'discussions',
-        'study_sessions', 'invites', 'quiz_submissions', 'planner', 'broadcasts', 'violations'
+        'enrollments', 'attendance', 'certificates', 'discussions', 'study_sessions',
+        'invites', 'quiz_submissions', 'violations', 'user_secrets', 'planner', 'broadcasts'
     ];
     const orderedTables = {};
     // 1. First, include requested tables in specific order
@@ -2148,7 +2148,7 @@ function validateBackup(data) {
     }
 
     // Verify all core tables are present (at least as empty arrays)
-    const missingTables = BACKUP_CONFIG.tables.filter(t => !data.tables[t.name]);
+    const missingTables = BACKUP_CONFIG.tables.filter(t => !data.tables[t.name] && !t.optional);
     if (missingTables.length > 0) {
         console.warn('Backup is missing data for tables:', missingTables.map(t => t.name));
         if (missingTables.length > 3) return 'Invalid backup: Significant portion of data tables are missing.';
