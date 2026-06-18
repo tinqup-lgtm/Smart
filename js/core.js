@@ -1585,6 +1585,8 @@ const CertificateGenerator = {
 
         // Signatures Section
         const sigY = 175;
+        const isApproved = options.isApproved === true;
+
         // Left Signature (Teacher)
         doc.setDrawColor(150, 150, 150);
         doc.line(40, sigY, 100, sigY);
@@ -1595,9 +1597,11 @@ const CertificateGenerator = {
         doc.setFont('helvetica', 'normal');
         doc.text('Course Teacher', 70, sigY + 13, { align: 'center' });
 
-        // Right Signature (Admin) - With Permanent Signature Image
+        // Right Signature (Admin)
         doc.line(width - 100, sigY, width - 40, sigY);
-        doc.addImage(this._signature, 'JPEG', width - 90, sigY - 25, 40, 25);
+        if (isApproved) {
+            doc.addImage(this._signature, 'JPEG', width - 90, sigY - 25, 40, 25);
+        }
         doc.setFont('helvetica', 'italic');
         doc.text('SmartLMS Administration', width - 70, sigY + 7, { align: 'center' });
         doc.setFont('helvetica', 'normal');
@@ -1607,29 +1611,36 @@ const CertificateGenerator = {
         const midY = 182;
         const centerX = width / 2;
 
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(180, 180, 180);
-        doc.text('OFFICIAL STAMP', centerX - 45, midY, { align: 'center' });
+        if (isApproved) {
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(200, 200, 200);
+            doc.text('OFFICIAL', centerX - 35, midY, { align: 'center' });
 
-        // Actual Stamp Graphic (Circular Seal)
-        doc.setDrawColor(91, 46, 166);
-        doc.setLineWidth(0.8);
-        doc.circle(centerX, midY, 12);
-        doc.setLineWidth(0.2);
-        doc.circle(centerX, midY, 11);
+            // Actual Stamp Graphic (Circular Seal)
+            doc.setDrawColor(91, 46, 166);
+            doc.setLineWidth(0.8);
+            doc.circle(centerX, midY, 12);
+            doc.setLineWidth(0.2);
+            doc.circle(centerX, midY, 11);
 
-        doc.setFontSize(5);
-        doc.setTextColor(91, 46, 166);
-        doc.text('SMARTLMS', centerX, midY - 3, { align: 'center' });
-        doc.setFontSize(8);
-        doc.text('SEAL', centerX, midY + 2, { align: 'center' });
-        doc.setFontSize(4);
-        doc.text('OFFICIAL', centerX, midY + 6, { align: 'center' });
+            doc.setFontSize(5);
+            doc.setTextColor(91, 46, 166);
+            doc.text('SMARTLMS', centerX, midY - 3, { align: 'center' });
+            doc.setFontSize(8);
+            doc.text('SEAL', centerX, midY + 2, { align: 'center' });
+            doc.setFontSize(4);
+            doc.text('OFFICIAL', centerX, midY + 6, { align: 'center' });
 
-        doc.setFontSize(10);
-        doc.setTextColor(180, 180, 180);
-        doc.text('VERIFIED', centerX + 45, midY, { align: 'center' });
+            doc.setFontSize(10);
+            doc.setTextColor(200, 200, 200);
+            doc.text('SEAL', centerX + 35, midY, { align: 'center' });
+        } else {
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(200, 200, 200);
+            doc.text('PENDING APPROVAL', centerX, midY, { align: 'center' });
+        }
 
         // Prominent ID and Date - refined placement
         doc.setFontSize(8);
