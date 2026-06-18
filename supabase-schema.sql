@@ -2669,6 +2669,12 @@ DROP POLICY IF EXISTS "Certificates: Teacher Issue" ON certificates;
 CREATE POLICY "Certificates: Teacher Issue" ON certificates FOR INSERT WITH CHECK (
   is_teacher() AND teacher_email = get_auth_email()
 );
+DROP POLICY IF EXISTS "Certificates: Teachers Update" ON certificates;
+CREATE POLICY "Certificates: Teachers Update" ON certificates FOR UPDATE USING (
+  is_teacher() AND teacher_email = get_auth_email()
+) WITH CHECK (
+  is_teacher() AND teacher_email = get_auth_email()
+);
 DROP POLICY IF EXISTS "Certificates: Student Request" ON certificates;
 CREATE POLICY "Certificates: Student Request" ON certificates FOR INSERT WITH CHECK (
   student_email = get_auth_email() AND status = 'requested'

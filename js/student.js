@@ -1561,7 +1561,7 @@ async function showCertificateDetails(certId) {
 
                     <div class="flex gap-10 mt-10">
                         <button class="button secondary w-auto" onclick="this.closest('.modal-backdrop').remove()">Close</button>
-                        ${cert.certificate_url ? `<button class="button primary w-auto" onclick="UI.viewFile('${escapeAttr(cert.certificate_url)}', 'Certificate')">View Certificate</button>` : ''}
+                        ${(cert.status === 'approved' && cert.certificate_url) ? `<button class="button primary w-auto" onclick="UI.viewFile('${escapeAttr(cert.certificate_url)}', 'Certificate')">View Certificate</button>` : ''}
                     </div>
                 </div>
             </div>

@@ -824,7 +824,8 @@ async function issueCert(studentEmail, existingId = null) {
 
     const doc = await CertificateGenerator.generatePDF(student.full_name, course.title, issueDate, verificationId, {
         teacherName: user.full_name,
-        verificationUrl: verificationUrl
+        verificationUrl: verificationUrl,
+        isApproved: false
     });
 
     if (!doc) throw new Error('PDF Generation failed');

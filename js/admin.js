@@ -461,13 +461,18 @@ async function approveCert(certId) {
         const verificationId = cert.metadata?.verification_id || crypto.randomUUID().slice(0, 13).toUpperCase();
         const issueDate = new Date().toISOString();
         const verificationUrl = `${window.location.origin}/index.html?page=verify&id=${verificationId}`;
+        const teacher = cert.teacher_email ? await SupabaseDB.getUser(cert.teacher_email) : null;
 
         const doc = await CertificateGenerator.generatePDF(
             cert.users?.full_name || cert.student_email,
             cert.courses?.title || 'Course Certificate',
             issueDate,
             verificationId,
-            { verificationUrl: verificationUrl }
+            {
+                verificationUrl: verificationUrl,
+                teacherName: teacher?.full_name,
+                isApproved: true
+            }
         );
 
         if (!doc) throw new Error('PDF Generation failed');
@@ -543,7 +548,12 @@ async function consolidateAndApproveCert(certId, studentEmail) {
             'All Enrolled Courses',
             issueDate,
             verificationId,
-            { type: 'consolidated', courses: courses, verificationUrl: verificationUrl }
+            {
+                type: 'consolidated',
+                courses: courses,
+                verificationUrl: verificationUrl,
+                isApproved: true
+            }
         );
 
         if (!doc) throw new Error('PDF Generation failed');
@@ -609,7 +619,8 @@ async function editCert(certId) {
             {
                 type: cert.type,
                 courses: cert.type === 'consolidated' ? (await SupabaseDB.getEnrollments(cert.student_email)).data.map(e => e.courses).filter(Boolean) : null,
-                verificationUrl: verificationUrl
+                verificationUrl: verificationUrl,
+                isApproved: cert.status === 'approved'
             }
         );
 
