@@ -479,6 +479,11 @@ async function approveCert(certId) {
 
         const pdfBlob = doc.output('blob');
         const path = `certificates/${cert.student_email}/${cert.course_id}_${TimerManager.getTime()}.pdf`;
+
+        if (cert.certificate_url) {
+            await SupabaseDB.deleteFileByUrl(cert.certificate_url);
+        }
+
         await SupabaseDB.uploadFile('certificates', path, pdfBlob);
         const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
 
@@ -542,6 +547,7 @@ async function consolidateAndApproveCert(certId, studentEmail) {
         const verificationId = cert?.metadata?.verification_id || crypto.randomUUID().slice(0, 13).toUpperCase();
         const issueDate = cert?.issued_at || new Date().toISOString();
         const verificationUrl = `${window.location.origin}/index.html?page=verify&id=${verificationId}`;
+        const teacher = cert.teacher_email ? await SupabaseDB.getUser(cert.teacher_email) : null;
 
         const doc = await CertificateGenerator.generatePDF(
             student.full_name,
@@ -552,6 +558,7 @@ async function consolidateAndApproveCert(certId, studentEmail) {
                 type: 'consolidated',
                 courses: courses,
                 verificationUrl: verificationUrl,
+                teacherName: teacher?.full_name,
                 isApproved: true
             }
         );
@@ -560,6 +567,11 @@ async function consolidateAndApproveCert(certId, studentEmail) {
 
         const pdfBlob = doc.output('blob');
         const path = `certificates/${studentEmail}/consolidated_${TimerManager.getTime()}.pdf`;
+
+        if (cert?.certificate_url) {
+            await SupabaseDB.deleteFileByUrl(cert.certificate_url);
+        }
+
         await SupabaseDB.uploadFile('certificates', path, pdfBlob);
         const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
 
@@ -610,6 +622,7 @@ async function editCert(certId) {
         const verificationId = cert.metadata?.verification_id || cert.id.slice(0, 13).toUpperCase();
         const issueDate = cert.issued_at || new Date().toISOString();
         const verificationUrl = `${window.location.origin}/index.html?page=verify&id=${verificationId}`;
+        const teacher = cert.teacher_email ? await SupabaseDB.getUser(cert.teacher_email) : null;
 
         const doc = await CertificateGenerator.generatePDF(
             cert.users?.full_name || cert.student_email,
@@ -620,6 +633,7 @@ async function editCert(certId) {
                 type: cert.type,
                 courses: cert.type === 'consolidated' ? (await SupabaseDB.getEnrollments(cert.student_email)).data.map(e => e.courses).filter(Boolean) : null,
                 verificationUrl: verificationUrl,
+                teacherName: teacher?.full_name,
                 isApproved: cert.status === 'approved'
             }
         );
