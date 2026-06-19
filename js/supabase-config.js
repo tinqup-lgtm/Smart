@@ -1390,6 +1390,50 @@ class SupabaseDB {
     }
 
     static async requestCertificate(studentEmail, courseId, reason) {
+        if (courseId === 'all') {
+            const enrollRes = await this.getEnrollments(studentEmail);
+            const courseIds = (enrollRes.data || []).map(e => e.course_id);
+            const results = [];
+
+            for (const id of courseIds) {
+                const { data: existing } = await supabaseClient
+                    .from('certificates')
+                    .select('id, status')
+                    .match({ student_email: studentEmail, course_id: id, type: 'single' })
+                    .maybeSingle();
+
+                if (!existing || existing.status === 'rejected' || existing.status === 'requested') {
+                    const payload = {
+                        id: existing?.id || crypto.randomUUID(),
+                        student_email: studentEmail,
+                        course_id: id,
+                        request_reason: reason,
+                        status: 'requested',
+                        type: 'single'
+                    };
+                    const res = await this._upsert('certificates', payload);
+                    if (res && res[0]) results.push(res[0]);
+
+                    try {
+                        const course = await this.getCourse(id);
+                        if (course && course.teacher_email) {
+                            await this.createNotification(
+                                course.teacher_email,
+                                'New Certificate Request',
+                                `Student ${studentEmail} requested a certificate for your course "${course.title}".`,
+                                'teacher.html?page=certificates',
+                                'cert_requested'
+                            );
+                        }
+                    } catch (e) {
+                        console.warn(`Failed to notify teacher for course ${id}:`, e);
+                    }
+                }
+            }
+            _cache.invalidate('certificates');
+            return results;
+        }
+
         const payload = {
             student_email: studentEmail,
             course_id: courseId,
