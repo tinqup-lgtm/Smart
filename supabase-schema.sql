@@ -1960,10 +1960,11 @@ BEGIN
   FROM certificates cert
   LEFT JOIN users u ON cert.student_email = u.email
   LEFT JOIN courses c ON cert.course_id = c.id
-  WHERE cert.metadata->>'verification_id' = p_verification_id
-     OR (CASE WHEN p_verification_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  WHERE (LOWER(cert.metadata->>'verification_id') = LOWER(p_verification_id)
+     OR (CASE WHEN p_verification_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
               THEN cert.id = p_verification_id::uuid
-              ELSE false END)
+              ELSE false END))
+    AND cert.status = 'approved'
   LIMIT 1;
 
   RETURN v_result;
