@@ -1395,6 +1395,7 @@ class SupabaseDB {
             const courseIds = (enrollRes.data || []).map(e => e.course_id);
             const results = [];
 
+            // 1. Handle individual course certificate requests (Notifies teachers)
             for (const id of courseIds) {
                 const { data: existing } = await supabaseClient
                     .from('certificates')
@@ -1430,6 +1431,26 @@ class SupabaseDB {
                     }
                 }
             }
+
+            // 2. Handle the master consolidated certificate request (For Student Dashboard and Admin approval)
+            const { data: existingMaster } = await supabaseClient
+                .from('certificates')
+                .select('id, status')
+                .match({ student_email: studentEmail, type: 'consolidated' })
+                .maybeSingle();
+
+            if (!existingMaster || existingMaster.status === 'rejected' || existingMaster.status === 'requested') {
+                const masterPayload = {
+                    id: existingMaster?.id || crypto.randomUUID(),
+                    student_email: studentEmail,
+                    course_id: null,
+                    request_reason: reason,
+                    status: 'requested',
+                    type: 'consolidated'
+                };
+                await this._upsert('certificates', masterPayload);
+            }
+
             _cache.invalidate('certificates');
             return results;
         }
@@ -1438,7 +1459,8 @@ class SupabaseDB {
             student_email: studentEmail,
             course_id: courseId,
             request_reason: reason,
-            status: 'requested'
+            status: 'requested',
+            type: 'single'
         };
         const data = await this._upsert('certificates', payload);
 

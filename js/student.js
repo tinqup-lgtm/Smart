@@ -1429,7 +1429,23 @@ async function renderCertificates() {
     if (renderId !== window.currentRenderId) return;
     const certsRes = await SupabaseDB.getCertificates(user.email);
     if (renderId !== window.currentRenderId) return;
-    const certs = certsRes.data || [];
+    let certs = certsRes.data || [];
+
+    // Filter logic to auto-propagate: If a student has a consolidated request or record,
+    // we prioritize it to ensure "only one certificate containing all courses" is displayed
+    // as the primary tracking item.
+    const hasConsolidated = certs.some(c => c.type === 'consolidated');
+    if (hasConsolidated) {
+        certs = certs.filter(c => {
+            // If a consolidated record exists, we hide ALL individual 'single' course certificates
+            // that are either pending OR already approved (if they are redundant with the master cert).
+            // This strictly enforces the "only one certificate containing all courses" rule in the UI.
+            if (c.type === 'single') {
+                return false;
+            }
+            return true;
+        });
+    }
 
   container.innerHTML = `
     <div class="flex-between mb-30">

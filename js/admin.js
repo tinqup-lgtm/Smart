@@ -653,6 +653,16 @@ async function editCert(certId) {
         const verificationUrl = `${window.location.origin}/index.html?page=verify&id=${verificationId}`;
         const teacher = cert.teacher_email ? await SupabaseDB.getUser(cert.teacher_email) : null;
 
+        // If consolidated, fetch vetted courses to ensure consistency in PDF regeneration
+        let consolidatedCourses = null;
+        if (cert.type === 'consolidated') {
+            const allCerts = await SupabaseDB._getAll(supabaseClient.from('certificates').select('*, courses(*)').eq('student_email', cert.student_email));
+            consolidatedCourses = allCerts
+                .filter(c => c.type === 'single' && (c.status === 'pending_approval' || c.status === 'approved'))
+                .map(c => c.courses)
+                .filter(Boolean);
+        }
+
         const doc = await CertificateGenerator.generatePDF(
             cert.users?.full_name || cert.student_email,
             newTitle,
@@ -660,7 +670,7 @@ async function editCert(certId) {
             verificationId,
             {
                 type: cert.type,
-                courses: cert.type === 'consolidated' ? (await SupabaseDB.getEnrollments(cert.student_email)).data.map(e => e.courses).filter(Boolean) : null,
+                courses: consolidatedCourses,
                 verificationUrl: verificationUrl,
                 teacherName: teacher?.full_name,
                 isApproved: cert.status === 'approved'
@@ -1487,7 +1497,11 @@ async function renderReports(tab = 'submissions', page = 1) {
             res = await SupabaseDB.getCertificates(null, null, { page, pageSize });
             if (renderId !== window.currentRenderId) return;
             UI.renderTable('reportsTable', ['User', 'Course/Type', 'Status', 'Info', 'Action'], res.data, (c) => {
-                const canApprove = c.status === 'pending_approval';
+                // For single certs, 'pending_approval' is the trigger.
+                // For consolidated certs, we allow 'requested' or 'pending_approval' to be approved.
+                const canApprove = (c.type === 'single' && c.status === 'pending_approval') ||
+                                   (c.type === 'consolidated' && (c.status === 'requested' || c.status === 'pending_approval'));
+
                 const typeLabel = c.type === 'consolidated' ? '<span class="badge-active">CONSOLIDATED</span>' : '<span class="badge-inactive">SINGLE</span>';
                 const displayTitle = c.metadata?.course_title || c.courses?.title || 'Consolidated';
                 return `
@@ -1502,11 +1516,13 @@ async function renderReports(tab = 'submissions', page = 1) {
                     <td>
                         <div class="flex gap-5 flex-wrap">
                             <button class="button secondary tiny w-auto" onclick="UI.viewFile('${escapeAttr(c.certificate_url)}', 'Certificate')">View</button>
-                            ${canApprove ? `
+                            ${canApprove ? (c.type === 'single' ? `
                                 <button class="button small tiny w-auto" style="background:var(--ok)" onclick="approveCert('${escapeAttr(c.id)}')">Approve</button>
+                                <button class="button danger tiny w-auto" onclick="rejectCert('${escapeAttr(c.id)}')">Reject</button>
+                            ` : `
                                 <button class="button small tiny w-auto" style="background:var(--purple)" onclick="consolidateAndApproveCert('${escapeAttr(c.id)}', '${escapeAttr(c.student_email)}')">Consolidate & Approve</button>
                                 <button class="button danger tiny w-auto" onclick="rejectCert('${escapeAttr(c.id)}')">Reject</button>
-                            ` : (c.type === 'consolidated' && c.status === 'approved' ? `
+                            `) : (c.type === 'consolidated' && c.status === 'approved' ? `
                                 <button class="button small tiny w-auto" style="background:var(--purple)" onclick="consolidateAndApproveCert('${escapeAttr(c.id)}', '${escapeAttr(c.student_email)}')">Update Consolidation</button>
                             ` : '')}
                             <button class="button secondary tiny w-auto" onclick="editCert('${escapeAttr(c.id)}')">Edit</button>
