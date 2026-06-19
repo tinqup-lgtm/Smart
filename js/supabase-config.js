@@ -386,10 +386,10 @@ class SupabaseDB {
         const { data, error } = await supabaseClient.rpc('create_user_secure', {
             p_email: normalizedEmail,
             p_full_name: user.full_name,
-            p_phone: user.phone,
-            p_password_hash: user.password,
-            p_role: user.role,
-            p_session_id: user.session_id,
+            p_phone: user.phone || null,
+            p_password_hash: user.password || null,
+            p_role: user.role || null,
+            p_session_id: user.session_id || null,
             p_invite_token: user.invite_token || null,
             p_active: user.active !== undefined ? user.active : true,
             p_metadata: sanitizedMetadata

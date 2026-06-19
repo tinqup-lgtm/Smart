@@ -1723,10 +1723,10 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION create_user_secure(
     p_email VARCHAR,
     p_full_name VARCHAR,
-    p_phone VARCHAR,
-    p_password_hash VARCHAR,
-    p_role VARCHAR,
-    p_session_id VARCHAR,
+    p_phone VARCHAR DEFAULT NULL,
+    p_password_hash VARCHAR DEFAULT NULL,
+    p_role VARCHAR DEFAULT NULL,
+    p_session_id VARCHAR DEFAULT NULL,
     p_invite_token VARCHAR DEFAULT NULL,
     p_active BOOLEAN DEFAULT TRUE,
     p_metadata JSONB DEFAULT '{}'::jsonb
