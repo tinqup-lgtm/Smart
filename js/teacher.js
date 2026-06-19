@@ -833,6 +833,18 @@ async function issueCert(studentEmail, existingId = null) {
     // Upload to Supabase Storage
     const pdfBlob = doc.output('blob');
     const path = `certificates/${studentEmail}/${courseId}_${TimerManager.getTime()}.pdf`;
+
+    // Teacher issuance always creates a new certificate or updates one,
+    // but we check if we should cleanup the old file if existingId is provided
+    if (existingId) {
+        try {
+            const { data: oldCert } = await supabaseClient.from('certificates').select('certificate_url').eq('id', existingId).maybeSingle();
+            if (oldCert?.certificate_url) {
+                await SupabaseDB.deleteFileByUrl(oldCert.certificate_url);
+            }
+        } catch(e) {}
+    }
+
     await SupabaseDB.uploadFile('certificates', path, pdfBlob);
     const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
 

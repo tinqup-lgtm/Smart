@@ -1479,7 +1479,7 @@ async function updateMaintBanner() {
 window.NotificationManager = NotificationManager;
 
 const CertificateGenerator = {
-    _signature: "data:image/jpeg,base64,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",
+    _signature: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wARCAC2ANADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDBAIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGl3c3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZnaRefhpanN0dXZ3eHl6goOEhYaHiImipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigD/2Q==",
 
     async generatePDF(studentName, courseTitle, issueDate, verificationId, options = {}) {
         if (!window.jspdf) {
@@ -1509,28 +1509,28 @@ const CertificateGenerator = {
 
         // Refined Border System
         doc.setDrawColor(218, 165, 32); // Golden
-        doc.setLineWidth(1.2);
-        doc.rect(5, 5, width - 10, height - 10);
+        doc.setLineWidth(1.5);
+        doc.rect(6, 6, width - 12, height - 12);
         doc.setLineWidth(0.5);
-        doc.rect(7, 7, width - 14, height - 14);
+        doc.rect(8, 8, width - 16, height - 16);
 
         // Decorative Corners
         doc.setFillColor(218, 165, 32);
-        const cs = 12; // corner size
-        doc.rect(5, 5, cs, cs, 'F');
-        doc.rect(width - 5 - cs, 5, cs, cs, 'F');
-        doc.rect(5, height - 5 - cs, cs, cs, 'F');
-        doc.rect(width - 5 - cs, height - 5 - cs, cs, cs, 'F');
+        const cs = 14; // corner size
+        doc.rect(6, 6, cs, cs, 'F');
+        doc.rect(width - 6 - cs, 6, cs, cs, 'F');
+        doc.rect(6, height - 6 - cs, cs, cs, 'F');
+        doc.rect(width - 6 - cs, height - 6 - cs, cs, cs, 'F');
 
         doc.setFillColor(255, 255, 255);
-        doc.circle(5 + cs/2, 5 + cs/2, 2, 'F');
-        doc.circle(width - 5 - cs/2, 5 + cs/2, 2, 'F');
-        doc.circle(5 + cs/2, height - 5 - cs/2, 2, 'F');
-        doc.circle(width - 5 - cs/2, height - 5 - cs/2, 2, 'F');
+        doc.circle(6 + cs/2, 6 + cs/2, 2.5, 'F');
+        doc.circle(width - 6 - cs/2, 6 + cs/2, 2.5, 'F');
+        doc.circle(6 + cs/2, height - 6 - cs/2, 2.5, 'F');
+        doc.circle(width - 6 - cs/2, height - 6 - cs/2, 2.5, 'F');
 
         doc.setDrawColor(91, 46, 166); // Primary Brand
         doc.setLineWidth(0.8);
-        doc.rect(12, 12, width - 24, height - 24);
+        doc.rect(14, 14, width - 28, height - 28);
 
         // Header
         doc.setTextColor(91, 46, 166);
@@ -1548,14 +1548,19 @@ const CertificateGenerator = {
         doc.setFontSize(16);
         doc.text('THIS IS TO CERTIFY THAT', width / 2, 80, { align: 'center' });
 
-        doc.setFontSize(38);
+        // Dynamic Name Scaling
+        let nameFontSize = 38;
+        if (studentName.length > 25) nameFontSize = 30;
+        if (studentName.length > 35) nameFontSize = 24;
+
+        doc.setFontSize(nameFontSize);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(0, 0, 0);
         doc.text(studentName.toUpperCase(), width / 2, 100, { align: 'center' });
 
         doc.setDrawColor(200, 200, 200);
         doc.setLineWidth(0.5);
-        doc.line(width/2 - 60, 105, width/2 + 60, 105);
+        doc.line(width/2 - 70, 105, width/2 + 70, 105);
 
         doc.setFontSize(16);
         doc.setFont('helvetica', 'normal');
@@ -1565,22 +1570,29 @@ const CertificateGenerator = {
         const mainText = isConsolidated
             ? 'HAS SUCCESSFULLY COMPLETED ALL PRESCRIBED REQUIREMENTS FOR'
             : 'HAS SUCCESSFULLY COMPLETED THE COURSE';
-        doc.text(mainText, width / 2, 120, { align: 'center' });
+        doc.text(mainText, width / 2, 118, { align: 'center' });
 
         if (isConsolidated && options.courses) {
             doc.setFontSize(14);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(91, 46, 166);
-            let y = 125;
-            options.courses.slice(0, 5).forEach(c => {
+            let y = 126;
+            options.courses.slice(0, 6).forEach(c => {
                 doc.text(`• ${c.title || c}`, width / 2, y, { align: 'center' });
-                y += 8;
+                y += 7;
             });
         } else {
-            doc.setFontSize(28);
+            // Dynamic Course Title Scaling/Wrapping
+            let courseFontSize = 28;
+            if (courseTitle.length > 40) courseFontSize = 22;
+            if (courseTitle.length > 60) courseFontSize = 18;
+
+            doc.setFontSize(courseFontSize);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(91, 46, 166);
-            doc.text(courseTitle, width / 2, 130, { align: 'center' });
+
+            const titleLines = doc.splitTextToSize(courseTitle.toUpperCase(), width - 80);
+            doc.text(titleLines, width / 2, 132, { align: 'center' });
         }
 
         // Signatures Section
@@ -1588,57 +1600,64 @@ const CertificateGenerator = {
         const isApproved = options.isApproved === true;
 
         // Left Signature (Teacher)
-        doc.setDrawColor(150, 150, 150);
+        doc.setDrawColor(180, 180, 180);
+        doc.setLineWidth(0.3);
         doc.line(40, sigY, 100, sigY);
         doc.setFontSize(12);
-        doc.setFont('helvetica', 'italic');
-        doc.setTextColor(100, 100, 100);
-        doc.text(options.teacherName || 'Lead Instructor', 70, sigY + 7, { align: 'center' });
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(80, 80, 80);
+        doc.text(options.teacherName || 'Lead Instructor', 70, sigY + 6, { align: 'center' });
+        doc.setFontSize(10);
         doc.setFont('helvetica', 'normal');
-        doc.text('Course Teacher', 70, sigY + 13, { align: 'center' });
+        doc.setTextColor(120, 120, 120);
+        doc.text('COURSE TEACHER', 70, sigY + 11, { align: 'center' });
 
         // Right Signature (Admin)
+        doc.setDrawColor(180, 180, 180);
         doc.line(width - 100, sigY, width - 40, sigY);
-        if (isApproved) {
-            doc.addImage(this._signature, 'JPEG', width - 90, sigY - 25, 40, 25);
-        }
-        doc.setFont('helvetica', 'italic');
-        doc.text('SmartLMS Administration', width - 70, sigY + 7, { align: 'center' });
-        doc.setFont('helvetica', 'normal');
-        doc.text('Authorized Official', width - 70, sigY + 13, { align: 'center' });
 
-        // Official Stamp / Seal Section - Positioned between labels
-        const midY = 182;
+        if (isApproved) {
+            // New signature positioning
+            doc.addImage(this._signature, 'JPEG', width - 90, sigY - 22, 40, 20);
+        }
+
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(80, 80, 80);
+        doc.text('SmartLMS Administration', width - 70, sigY + 6, { align: 'center' });
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(120, 120, 120);
+        doc.text('AUTHORIZED OFFICIAL', width - 70, sigY + 11, { align: 'center' });
+
+        // Official Stamp / Seal Section - Moved and Enhanced
+        const midY = 178;
         const centerX = width / 2;
 
         if (isApproved) {
-            doc.setFontSize(10);
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(200, 200, 200);
-            doc.text('OFFICIAL', centerX - 35, midY, { align: 'center' });
-
-            // Actual Stamp Graphic (Circular Seal)
+            // Enhanced Circular Seal
             doc.setDrawColor(91, 46, 166);
-            doc.setLineWidth(0.8);
-            doc.circle(centerX, midY, 12);
-            doc.setLineWidth(0.2);
-            doc.circle(centerX, midY, 11);
+            doc.setLineWidth(1.0);
+            doc.circle(centerX, midY, 15);
+            doc.setLineWidth(0.4);
+            doc.circle(centerX, midY, 13.5);
 
-            doc.setFontSize(5);
+            doc.setFontSize(6);
             doc.setTextColor(91, 46, 166);
-            doc.text('SMARTLMS', centerX, midY - 3, { align: 'center' });
-            doc.setFontSize(8);
-            doc.text('SEAL', centerX, midY + 2, { align: 'center' });
-            doc.setFontSize(4);
-            doc.text('OFFICIAL', centerX, midY + 6, { align: 'center' });
-
-            doc.setFontSize(10);
-            doc.setTextColor(200, 200, 200);
-            doc.text('SEAL', centerX + 35, midY, { align: 'center' });
-        } else {
-            doc.setFontSize(10);
             doc.setFont('helvetica', 'bold');
-            doc.setTextColor(200, 200, 200);
+            doc.text('SMARTLMS', centerX, midY - 4, { align: 'center' });
+            doc.setFontSize(10);
+            doc.text('SEAL', centerX, midY + 2, { align: 'center' });
+            doc.setFontSize(5);
+            doc.text('OFFICIAL VERIFIED', centerX, midY + 7, { align: 'center' });
+
+            // Outer circular text (simulated)
+            doc.setFontSize(4);
+            doc.text('VALIDATED • AUTHENTIC • SECURE', centerX, midY + 11, { align: 'center' });
+        } else {
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(230, 230, 230);
             doc.text('PENDING APPROVAL', centerX, midY, { align: 'center' });
         }
 
