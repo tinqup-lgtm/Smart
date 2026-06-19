@@ -1514,6 +1514,18 @@ const CertificateGenerator = {
         doc.setLineWidth(0.4);
         doc.rect(12, 12, width - 24, height - 24);
 
+        // Corner Ornaments
+        doc.setLineWidth(1.5);
+        const oS = 8; // Ornament size
+        // Top Left
+        doc.line(10, 10, 10 + oS, 10); doc.line(10, 10, 10, 10 + oS);
+        // Top Right
+        doc.line(width - 10, 10, width - 10 - oS, 10); doc.line(width - 10, 10, width - 10, 10 + oS);
+        // Bottom Left
+        doc.line(10, height - 10, 10 + oS, height - 10); doc.line(10, height - 10, 10, height - 10 - oS);
+        // Bottom Right
+        doc.line(width - 10, height - 10, width - 10 - oS, height - 10); doc.line(width - 10, height - 10, width - 10, height - 10 - oS);
+
         // Header - Institutional Branding
         doc.setTextColor(30, 30, 30);
         doc.setFontSize(22);
@@ -1697,14 +1709,19 @@ const CertificateGenerator = {
         // QR Code - Repositioned to bottom right
         if (typeof QRCode !== 'undefined' && options.verificationUrl) {
             const qrContainer = document.createElement('div');
+            // Ensure no margins for cleaner PDF integration
             new QRCode(qrContainer, {
                 text: options.verificationUrl,
                 width: 128,
-                height: 128
+                height: 128,
+                correctLevel: QRCode.CorrectLevel.H
             });
-            await new Promise(r => setTimeout(r, 100));
+            await new Promise(r => setTimeout(r, 150));
             const qrCanvas = qrContainer.querySelector('canvas');
             if (qrCanvas) {
+                doc.setDrawColor(240, 240, 240);
+                doc.setLineWidth(0.1);
+                doc.rect(width - 36, height - 36, 22, 22);
                 doc.addImage(qrCanvas.toDataURL('image/png'), 'PNG', width - 35, height - 35, 20, 20);
             }
         }
