@@ -1480,7 +1480,7 @@ class SupabaseDB {
             const { data, error } = await supabaseClient
                 .from('certificates')
                 .select('*, courses(title), users!student_email(full_name)')
-                .filter('metadata->>verification_id', 'eq', verificationId)
+                .eq('metadata->>verification_id', verificationId)
                 .eq('status', 'approved')
                 .maybeSingle();
 
