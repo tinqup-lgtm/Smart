@@ -534,26 +534,22 @@ async function rejectCert(certId) {
 }
 
 async function consolidateAndApproveCert(certId, studentEmail) {
-    if (!await UI.confirm('This will create or update a consolidated certificate including all teacher-issued courses. Proceed?')) return;
+    if (!await UI.confirm('This will create or update a consolidated certificate including all enrolled courses. Proceed?')) return;
 
     try {
-        UI.showLoading('pageContent', 'Filtering vetted courses and generating PDF...');
+        UI.showLoading('pageContent', 'Fetching enrolled courses and generating PDF...');
 
-        // 1. Fetch all certificates for the student to identify teacher-vetted courses
-        // (Status 'pending_approval' or 'approved' means teacher has issued/verified it)
-        const query = supabaseClient.from('certificates').select('*, courses(*)').eq('student_email', studentEmail);
-        const allCerts = await SupabaseDB._getAll(query);
+        // 1. Fetch all courses the student is currently enrolled in to auto-propagate onto the certificate
+        const enrollRes = await SupabaseDB.getEnrollments(studentEmail);
+        const enrolledCourses = (enrollRes.data || []).map(e => e.courses).filter(Boolean);
 
-        const vettedCourses = allCerts
-            .filter(c => c.type === 'single' && (c.status === 'pending_approval' || c.status === 'approved'))
-            .map(c => c.courses)
-            .filter(Boolean);
-
-        if (vettedCourses.length === 0) {
-            throw new Error('No teacher-issued/vetted courses found for this student. Teachers must issue individual course certificates first.');
+        if (enrolledCourses.length === 0) {
+            throw new Error('This student is not enrolled in any courses.');
         }
 
         // 2. Identify the target certificate (either the existing consolidated one or the one currently selected)
+        const query = supabaseClient.from('certificates').select('*').eq('student_email', studentEmail);
+        const allCerts = await SupabaseDB._getAll(query);
         const existingConsolidated = allCerts.find(c => c.type === 'consolidated');
         const currentCert = allCerts.find(c => c.id === certId);
 
@@ -575,7 +571,7 @@ async function consolidateAndApproveCert(certId, studentEmail) {
             verificationId,
             {
                 type: 'consolidated',
-                courses: vettedCourses,
+                courses: enrolledCourses,
                 verificationUrl: verificationUrl,
                 teacherName: 'SmartLMS Registrar',
                 isApproved: true
@@ -653,14 +649,11 @@ async function editCert(certId) {
         const verificationUrl = `${window.location.origin}/index.html?page=verify&id=${verificationId}`;
         const teacher = cert.teacher_email ? await SupabaseDB.getUser(cert.teacher_email) : null;
 
-        // If consolidated, fetch vetted courses to ensure consistency in PDF regeneration
+        // If consolidated, fetch enrolled courses to ensure consistency in PDF regeneration
         let consolidatedCourses = null;
         if (cert.type === 'consolidated') {
-            const allCerts = await SupabaseDB._getAll(supabaseClient.from('certificates').select('*, courses(*)').eq('student_email', cert.student_email));
-            consolidatedCourses = allCerts
-                .filter(c => c.type === 'single' && (c.status === 'pending_approval' || c.status === 'approved'))
-                .map(c => c.courses)
-                .filter(Boolean);
+            const enrollRes = await SupabaseDB.getEnrollments(cert.student_email);
+            consolidatedCourses = (enrollRes.data || []).map(e => e.courses).filter(Boolean);
         }
 
         const doc = await CertificateGenerator.generatePDF(
