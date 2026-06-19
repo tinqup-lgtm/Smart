@@ -1688,7 +1688,24 @@ const CertificateGenerator = {
         doc.line(width - 65, sigY, width - 25, sigY);
 
         if (isApproved) {
-            doc.addImage(this._signature, 'JPEG', width - 60, sigY - 18, 35, 15);
+            try {
+                // To resolve net::ERR_INVALID_URL, we convert the base64 signature to a Uint8Array.
+                // This bypasses jsPDF's internal URL loader and directly embeds the raw bytes into the PDF.
+                const base64Data = CertificateGenerator._signature.split(',')[1];
+                const binaryString = window.atob(base64Data);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+
+                doc.addImage(bytes, 'JPEG', width - 60, sigY - 18, 35, 15);
+            } catch (err) {
+                console.warn('Official signature image injection failed:', err);
+                doc.setFontSize(8);
+                doc.setFont('times', 'italic');
+                doc.setTextColor(150, 150, 150);
+                doc.text('[Digitally Signed]', width - 42, sigY - 10, { align: 'center' });
+            }
         }
 
         doc.setFontSize(10);
