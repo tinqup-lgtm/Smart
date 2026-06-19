@@ -806,37 +806,42 @@ function showCreateUserForm() {
   showUserForm(null);
 }
 
-function exportUsersCSV() {
+async function exportUsersCSV() {
   const searchTerm = document.getElementById('userSearch')?.value?.toLowerCase() || '';
   const roleFilter = document.getElementById('roleFilter')?.value || 'all';
+  const statusFilter = document.getElementById('statusFilter')?.value || 'all';
 
-  const listToExport = allUsers.filter(u => {
-    const matchesSearch = !searchTerm ||
-        u.full_name?.toLowerCase().includes(searchTerm) ||
-        u.email?.toLowerCase().includes(searchTerm);
-    const matchesRole = roleFilter === 'all' || u.role === roleFilter;
-    return matchesSearch && matchesRole;
-  });
+  UI.showNotification('Preparing export...', 'info');
 
-  if (listToExport.length === 0) return UI.showNotification('No users to export matching current filters', 'warn');
-  const headers = ['Full Name', 'Email', 'Role', 'Status', 'Joined'];
-  const rows = listToExport.map(u => [
-    `"${(u.full_name || '').replace(/"/g, '""')}"`,
-    `"${(u.email || '').replace(/"/g, '""')}"`,
-    `"${(u.role || '').replace(/"/g, '""')}"`,
-    u.active ? 'Active' : 'Inactive',
-    u.created_at ? new Date(u.created_at).toISOString().split('T')[0] : 'N/A'
-  ]);
-  const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", "users_export.csv");
-  link.style.visibility = 'hidden';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  try {
+      // Fetch matching users (bypass pagination by using a large page size)
+      const { data: listToExport } = await SupabaseDB.getUsers({
+          searchTerm,
+          role: roleFilter === 'all' ? null : roleFilter,
+          status: statusFilter === 'all' ? null : statusFilter,
+          page: 1,
+          pageSize: 5000 // Sufficient for most LMS instances
+      });
+
+      if (!listToExport || listToExport.length === 0) {
+          return UI.showNotification('No users to export matching current filters', 'warn');
+      }
+
+      const headers = ['Full Name', 'Email', 'Role', 'Status', 'Joined'];
+      const rows = listToExport.map(u => [
+          u.full_name || '',
+          u.email || '',
+          u.role || '',
+          u.active ? 'Active' : 'Inactive',
+          u.created_at ? new Date(u.created_at).toISOString().split('T')[0] : 'N/A'
+      ]);
+
+      Exporter.csv('users_export.csv', headers, rows);
+      UI.showNotification(`Exported ${listToExport.length} users successfully.`, 'success');
+  } catch (e) {
+      console.error('Export failed:', e);
+      UI.showNotification('Export failed: ' + e.message, 'error');
+  }
 }
 
 async function broadcastNotif() {
