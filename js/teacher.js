@@ -809,6 +809,8 @@ async function issueCert(studentEmail, existingId = null) {
   const btn = document.getElementById('issueCertBtn');
   btn.disabled = true; btn.textContent = 'Generating...';
 
+  // Handle potential 'null' string passed from HTML event handlers
+  const certId = (existingId === 'null' || !existingId) ? null : existingId;
   const courseId = document.getElementById('certCourseId').value;
 
   try {
@@ -818,7 +820,24 @@ async function issueCert(studentEmail, existingId = null) {
 
     if (!student || !course) throw new Error('Student or Course data not found');
 
-    const verificationId = crypto.randomUUID().slice(0, 13).toUpperCase();
+    // Fetch existing cert to preserve verification_id if possible
+    let verificationId = crypto.randomUUID().slice(0, 13).toUpperCase();
+    if (certId) {
+        const { data: existing } = await supabaseClient.from('certificates').select('metadata').eq('id', certId).maybeSingle();
+        if (existing?.metadata?.verification_id) {
+            verificationId = existing.metadata.verification_id;
+        }
+    } else {
+        // Even if no ID is passed, check if a cert already exists for this student/course to avoid duplicates
+        const { data: existing } = await supabaseClient.from('certificates')
+            .select('id, metadata')
+            .match({ student_email: studentEmail, course_id: courseId, type: 'single' })
+            .maybeSingle();
+        if (existing?.metadata?.verification_id) {
+            verificationId = existing.metadata.verification_id;
+        }
+    }
+
     const issueDate = new Date().toISOString();
     const verificationUrl = `${window.location.origin}/index.html?page=verify&id=${verificationId}`;
 
@@ -848,14 +867,16 @@ async function issueCert(studentEmail, existingId = null) {
     await SupabaseDB.uploadFile('certificates', path, pdfBlob);
     const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
 
+    const { data: currentCert } = certId ? await supabaseClient.from('certificates').select('metadata').eq('id', certId).maybeSingle() : { data: null };
+
     await SupabaseDB.issueCertificate({
-      id: existingId || crypto.randomUUID(),
+      id: certId || crypto.randomUUID(),
       student_email: studentEmail,
       course_id: courseId,
       certificate_url: certUrl,
       issued_at: issueDate,
       status: 'pending_approval',
-      metadata: { verification_id: verificationId }
+      metadata: { ...(currentCert?.metadata || {}), verification_id: verificationId }
     });
 
     UI.showNotification('Certificate issued and sent to admin for approval.', 'success');
