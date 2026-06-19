@@ -459,13 +459,13 @@ async function approveCert(certId) {
         if (!cert) throw new Error('Certificate not found');
 
         const verificationId = cert.metadata?.verification_id || crypto.randomUUID().slice(0, 13).toUpperCase();
-        const issueDate = new Date().toISOString();
+        const issueDate = cert.issued_at || new Date().toISOString();
         const verificationUrl = `${window.location.origin}/index.html?page=verify&id=${verificationId}`;
         const teacher = cert.teacher_email ? await SupabaseDB.getUser(cert.teacher_email) : null;
 
         const doc = await CertificateGenerator.generatePDF(
             cert.users?.full_name || cert.student_email,
-            cert.courses?.title || 'Course Certificate',
+            cert.courses?.title || (cert.metadata?.course_title || 'Course Certificate'),
             issueDate,
             verificationId,
             {
@@ -478,7 +478,7 @@ async function approveCert(certId) {
         if (!doc) throw new Error('PDF Generation failed');
 
         const pdfBlob = doc.output('blob');
-        const path = `certificates/${cert.student_email}/${cert.course_id}_${TimerManager.getTime()}.pdf`;
+        const path = `certificates/${cert.student_email}/${cert.course_id || 'manual'}_${TimerManager.getTime()}.pdf`;
 
         if (cert.certificate_url) {
             await SupabaseDB.deleteFileByUrl(cert.certificate_url);
@@ -547,7 +547,7 @@ async function consolidateAndApproveCert(certId, studentEmail) {
         const verificationId = cert?.metadata?.verification_id || crypto.randomUUID().slice(0, 13).toUpperCase();
         const issueDate = cert?.issued_at || new Date().toISOString();
         const verificationUrl = `${window.location.origin}/index.html?page=verify&id=${verificationId}`;
-        const teacher = cert.teacher_email ? await SupabaseDB.getUser(cert.teacher_email) : null;
+        const teacher = cert?.teacher_email ? await SupabaseDB.getUser(cert.teacher_email) : null;
 
         const doc = await CertificateGenerator.generatePDF(
             student.full_name,

@@ -156,9 +156,9 @@ const LandingUI = {
         try {
             const cert = await SupabaseDB.verifyCertificate(verificationId);
 
-            if (cert) {
-                const studentName = cert.users?.full_name || 'Verified Student';
-                const courseTitle = cert.courses?.title || (cert.type === 'consolidated' ? 'All Enrolled Courses' : 'Course Certificate');
+            if (cert && cert.status === 'approved') {
+                const studentName = cert.student_name || 'Verified Student';
+                const courseTitle = cert.course_title;
                 const issueDate = new Date(cert.issued_at).toLocaleDateString(undefined, { dateStyle: 'long' });
 
                 content.innerHTML = `
@@ -192,6 +192,15 @@ const LandingUI = {
                             <button class="button primary w-auto px-40" onclick="LandingUI.closeInfoModal()">Done</button>
                             ${cert.certificate_url ? `<button class="button secondary w-auto px-40" onclick="UI.viewFile('${escapeAttr(cert.certificate_url)}', 'Verified Certificate')">View PDF</button>` : ''}
                         </div>
+                    </div>
+                `;
+            } else if (cert) {
+                content.innerHTML = `
+                    <div class="text-center p-40">
+                        <div style="font-size: 5rem; margin-bottom: 20px;">⏳</div>
+                        <h2 class="warning-text">Verification Pending</h2>
+                        <p class="text-muted mb-30">This certificate record was found, but it is currently awaiting official approval from the institution.</p>
+                        <button class="button primary w-auto px-40" onclick="LandingUI.closeInfoModal()">Close</button>
                     </div>
                 `;
             } else {

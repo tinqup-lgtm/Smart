@@ -1454,6 +1454,10 @@ CREATE INDEX IF NOT EXISTS idx_violations_assessment ON violations(assessment_id
 CREATE INDEX IF NOT EXISTS idx_violations_user ON violations(user_email);
 CREATE INDEX IF NOT EXISTS idx_violations_reporting ON violations(assessment_id, user_email);
 
+-- Ensure uniqueness for certificates to prevent duplicates
+CREATE UNIQUE INDEX IF NOT EXISTS idx_certificates_unique_single ON certificates (student_email, course_id) WHERE (type = 'single');
+CREATE UNIQUE INDEX IF NOT EXISTS idx_certificates_unique_consolidated ON certificates (student_email) WHERE (type = 'consolidated');
+
 -- Missing Foreign-Key Indexes
 CREATE INDEX IF NOT EXISTS idx_topics_teacher_email ON topics(teacher_email);
 CREATE INDEX IF NOT EXISTS idx_lessons_teacher_email ON lessons(teacher_email);
@@ -1935,6 +1939,36 @@ CREATE OR REPLACE FUNCTION get_server_time()
 RETURNS TIMESTAMP WITH TIME ZONE AS $$
   SELECT NOW();
 $$ LANGUAGE sql STABLE;
+
+-- Public Certificate Verification RPC
+-- Returns public metadata for a certificate by verification_id or UUID
+-- SECURITY DEFINER allows unauthenticated users to verify certificates
+CREATE OR REPLACE FUNCTION verify_certificate(p_verification_id TEXT)
+RETURNS JSONB AS $$
+DECLARE
+  v_result JSONB;
+BEGIN
+  SELECT jsonb_build_object(
+    'student_name', u.full_name,
+    'course_title', COALESCE(c.title, cert.metadata->>'course_title', CASE WHEN cert.type = 'consolidated' THEN 'All Enrolled Courses' ELSE 'Course Certificate' END),
+    'issued_at', cert.issued_at,
+    'verification_id', COALESCE(cert.metadata->>'verification_id', cert.id::text),
+    'type', cert.type,
+    'status', cert.status,
+    'certificate_url', CASE WHEN cert.status = 'approved' THEN cert.certificate_url ELSE NULL END
+  ) INTO v_result
+  FROM certificates cert
+  LEFT JOIN users u ON cert.student_email = u.email
+  LEFT JOIN courses c ON cert.course_id = c.id
+  WHERE cert.metadata->>'verification_id' = p_verification_id
+     OR (CASE WHEN p_verification_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+              THEN cert.id = p_verification_id::uuid
+              ELSE false END)
+  LIMIT 1;
+
+  RETURN v_result;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
 -- Secure RPC for password reset request (unauthenticated)
 CREATE OR REPLACE FUNCTION request_password_reset_secure(
