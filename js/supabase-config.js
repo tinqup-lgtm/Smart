@@ -1477,13 +1477,9 @@ class SupabaseDB {
 
     static async verifyCertificate(verificationId) {
         return this._request(async () => {
-            const { data, error } = await supabaseClient
-                .from('certificates')
-                .select('*, courses(title), users!student_email(full_name)')
-                .filter('metadata->>verification_id', 'eq', verificationId)
-                .eq('status', 'approved')
-                .maybeSingle();
-
+            const { data, error } = await supabaseClient.rpc('verify_certificate', {
+                p_verification_id: verificationId
+            });
             if (error) throw error;
             return data;
         });
