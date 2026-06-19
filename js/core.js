@@ -1631,10 +1631,10 @@ const CertificateGenerator = {
             doc.setFontSize(10);
             doc.setFont('times', 'normal');
             doc.setTextColor(80, 80, 80);
-            let listY = 195;
-            options.courses.slice(0, 8).forEach(c => {
+            let listY = 192;
+            options.courses.slice(0, 12).forEach(c => {
                 doc.text(`• ${c.title || c}`, centerX, listY, { align: 'center' });
-                listY += 5;
+                listY += 4.5;
             });
         }
 

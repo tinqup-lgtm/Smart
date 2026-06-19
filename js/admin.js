@@ -534,20 +534,39 @@ async function rejectCert(certId) {
 }
 
 async function consolidateAndApproveCert(certId, studentEmail) {
-    if (!await UI.confirm('This will create a new consolidated certificate with ALL student enrolled courses. Proceed?')) return;
+    if (!await UI.confirm('This will create or update a consolidated certificate including all teacher-issued courses. Proceed?')) return;
 
     try {
-        const { data: cert } = await supabaseClient.from('certificates').select('*').eq('id', certId).single();
-        const student = await SupabaseDB.getUser(studentEmail);
-        const enrollments = await SupabaseDB.getEnrollments(studentEmail);
-        const courses = enrollments.data.map(e => e.courses).filter(Boolean);
+        UI.showLoading('pageContent', 'Filtering vetted courses and generating PDF...');
 
+        // 1. Fetch all certificates for the student to identify teacher-vetted courses
+        // (Status 'pending_approval' or 'approved' means teacher has issued/verified it)
+        const query = supabaseClient.from('certificates').select('*, courses(*)').eq('student_email', studentEmail);
+        const allCerts = await SupabaseDB._getAll(query);
+
+        const vettedCourses = allCerts
+            .filter(c => c.type === 'single' && (c.status === 'pending_approval' || c.status === 'approved'))
+            .map(c => c.courses)
+            .filter(Boolean);
+
+        if (vettedCourses.length === 0) {
+            throw new Error('No teacher-issued/vetted courses found for this student. Teachers must issue individual course certificates first.');
+        }
+
+        // 2. Identify the target certificate (either the existing consolidated one or the one currently selected)
+        const existingConsolidated = allCerts.find(c => c.type === 'consolidated');
+        const currentCert = allCerts.find(c => c.id === certId);
+
+        // We prioritize the existing consolidated cert if it exists, otherwise we transform the current cert
+        const targetId = existingConsolidated?.id || certId;
+        const targetCert = existingConsolidated || currentCert;
+
+        const student = await SupabaseDB.getUser(studentEmail);
         if (!student) throw new Error('Student data not found');
 
-        const verificationId = cert?.metadata?.verification_id || crypto.randomUUID().slice(0, 13).toUpperCase();
-        const issueDate = cert?.issued_at || new Date().toISOString();
+        const verificationId = targetCert?.metadata?.verification_id || crypto.randomUUID().slice(0, 13).toUpperCase();
+        const issueDate = targetCert?.issued_at || new Date().toISOString();
         const verificationUrl = `${window.location.origin}/index.html?page=verify&id=${verificationId}`;
-        const teacher = cert?.teacher_email ? await SupabaseDB.getUser(cert.teacher_email) : null;
 
         const doc = await CertificateGenerator.generatePDF(
             student.full_name,
@@ -556,9 +575,9 @@ async function consolidateAndApproveCert(certId, studentEmail) {
             verificationId,
             {
                 type: 'consolidated',
-                courses: courses,
+                courses: vettedCourses,
                 verificationUrl: verificationUrl,
-                teacherName: teacher?.full_name,
+                teacherName: 'SmartLMS Registrar',
                 isApproved: true
             }
         );
@@ -568,33 +587,43 @@ async function consolidateAndApproveCert(certId, studentEmail) {
         const pdfBlob = doc.output('blob');
         const path = `certificates/${studentEmail}/consolidated_${TimerManager.getTime()}.pdf`;
 
-        if (cert?.certificate_url) {
-            await SupabaseDB.deleteFileByUrl(cert.certificate_url);
+        if (targetCert?.certificate_url) {
+            await SupabaseDB.deleteFileByUrl(targetCert.certificate_url);
         }
 
         await SupabaseDB.uploadFile('certificates', path, pdfBlob);
         const certUrl = await SupabaseDB.getPublicUrl('certificates', path);
 
-        await SupabaseDB.updateCertificate(certId, {
+        const payload = {
+            id: targetId,
+            student_email: studentEmail,
             certificate_url: certUrl,
             status: 'approved',
             type: 'consolidated',
-            metadata: { ...(cert?.metadata || {}), verification_id: verificationId }
-        });
+            metadata: { ...(targetCert?.metadata || {}), verification_id: verificationId },
+            issued_at: issueDate,
+            updated_at: new Date().toISOString()
+        };
+
+        // Use upsert to handle both creation (if targetId was from a single cert) and update
+        const { error: upsertError } = await supabaseClient.from('certificates').upsert(payload);
+        if (upsertError) throw upsertError;
 
         await SupabaseDB.createNotification(
             studentEmail,
-            'Consolidated Certificate Issued',
-            'Your consolidated certificate including all courses is now available.',
+            'Consolidated Certificate Ready',
+            'Your consolidated certificate has been updated with all your verified courses.',
             null,
             'cert_approved'
         );
 
-        UI.showNotification('Consolidated certificate approved!', 'success');
+        UI.showNotification('Consolidated certificate approved and updated!', 'success');
         renderReports('certificates');
     } catch (e) {
         console.error('Consolidation error:', e);
         UI.showNotification('Error: ' + (e.message || 'PDF Generation failed'), 'error');
+    } finally {
+        UI.hideLoading('pageContent');
     }
 }
 
@@ -1477,7 +1506,9 @@ async function renderReports(tab = 'submissions', page = 1) {
                                 <button class="button small tiny w-auto" style="background:var(--ok)" onclick="approveCert('${escapeAttr(c.id)}')">Approve</button>
                                 <button class="button small tiny w-auto" style="background:var(--purple)" onclick="consolidateAndApproveCert('${escapeAttr(c.id)}', '${escapeAttr(c.student_email)}')">Consolidate & Approve</button>
                                 <button class="button danger tiny w-auto" onclick="rejectCert('${escapeAttr(c.id)}')">Reject</button>
-                            ` : ''}
+                            ` : (c.type === 'consolidated' && c.status === 'approved' ? `
+                                <button class="button small tiny w-auto" style="background:var(--purple)" onclick="consolidateAndApproveCert('${escapeAttr(c.id)}', '${escapeAttr(c.student_email)}')">Update Consolidation</button>
+                            ` : '')}
                             <button class="button secondary tiny w-auto" onclick="editCert('${escapeAttr(c.id)}')">Edit</button>
                             <button class="button danger tiny w-auto" onclick="deleteCert('${escapeAttr(c.id)}')">Delete</button>
                         </div>

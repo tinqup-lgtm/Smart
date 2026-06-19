@@ -1354,9 +1354,15 @@ async function showCertRequestModal() {
     const user = await SessionManager.getCurrentUser();
     const enrollments = await SupabaseDB.getEnrollments(user.email);
 
-    select.innerHTML = enrollments.data.map(e => `
+    const options = enrollments.data.map(e => `
       <option value="${escapeAttr(e.course_id)}">${escapeHtml(e.courses.title)}</option>
-    `).join('') || '<option value="" disabled>No enrolled courses</option>';
+    `);
+
+    if (enrollments.data.length > 0) {
+        options.unshift('<option value="all">All Enrolled Courses (Notify all teachers)</option>');
+    }
+
+    select.innerHTML = options.join('') || '<option value="" disabled>No enrolled courses</option>';
 
     modal.classList.remove('hidden');
   } catch (e) {
