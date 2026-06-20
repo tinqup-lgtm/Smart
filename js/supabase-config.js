@@ -321,7 +321,7 @@ class SupabaseDB {
         return this._request(async () => {
             let query = supabaseClient
                 .from('enrollments')
-                .select('*, users!inner(*), courses(title, teacher_email)', { count: 'exact' })
+                .select('*, users!inner(*), courses(*)', { count: 'exact' })
                 .in('course_id', courseIds);
 
             if (searchTerm) {
@@ -714,7 +714,7 @@ class SupabaseDB {
         return _cache.fetch(`enrollments_${studentEmail}`, async () => {
             const { data, count, error } = await supabaseClient
                 .from('enrollments')
-                .select('*, courses(title, teacher_email)', { count: 'exact' })
+                .select('*, courses(*)', { count: 'exact' })
                 .eq('student_email', studentEmail);
             if (error) throw error;
             return { data: data || [], total: count || 0 };
