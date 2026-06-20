@@ -1692,7 +1692,8 @@ const CertificateGenerator = {
                 // To resolve net::ERR_INVALID_URL, we convert the base64 signature to a Uint8Array.
                 // This bypasses jsPDF's internal URL loader and directly embeds the raw bytes into the PDF.
                 const base64Data = CertificateGenerator._signature.split(',')[1];
-                const binaryString = window.atob(base64Data);
+                // Sanitize base64 string to remove any whitespace or newlines that might cause atob to fail
+                const binaryString = window.atob(base64Data.replace(/\s/g, ''));
                 const bytes = new Uint8Array(binaryString.length);
                 for (let i = 0; i < binaryString.length; i++) {
                     bytes[i] = binaryString.charCodeAt(i);

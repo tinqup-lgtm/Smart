@@ -321,7 +321,7 @@ class SupabaseDB {
         return this._request(async () => {
             let query = supabaseClient
                 .from('enrollments')
-                .select('*, users!inner(*), courses(title)', { count: 'exact' })
+                .select('*, users!inner(*), courses(*)', { count: 'exact' })
                 .in('course_id', courseIds);
 
             if (searchTerm) {
@@ -714,7 +714,7 @@ class SupabaseDB {
         return _cache.fetch(`enrollments_${studentEmail}`, async () => {
             const { data, count, error } = await supabaseClient
                 .from('enrollments')
-                .select('*, courses(title)', { count: 'exact' })
+                .select('*, courses(*)', { count: 'exact' })
                 .eq('student_email', studentEmail);
             if (error) throw error;
             return { data: data || [], total: count || 0 };
@@ -1392,11 +1392,16 @@ class SupabaseDB {
     static async requestCertificate(studentEmail, courseId, reason) {
         if (courseId === 'all') {
             const enrollRes = await this.getEnrollments(studentEmail);
-            const courseIds = (enrollRes.data || []).map(e => e.course_id);
+            const enrollments = enrollRes.data || [];
             const results = [];
+            const teacherNotifications = {}; // Map of teacherEmail -> list of course titles
 
-            // 1. Handle individual course certificate requests (Notifies teachers)
-            for (const id of courseIds) {
+            // 1. Handle individual course certificate requests
+            for (const e of enrollments) {
+                const id = e.course_id;
+                const courseTitle = e.courses?.title || 'Unknown Course';
+                const teacherEmail = e.courses?.teacher_email;
+
                 const { data: existing } = await supabaseClient
                     .from('certificates')
                     .select('id, status')
@@ -1415,20 +1420,30 @@ class SupabaseDB {
                     const res = await this._upsert('certificates', payload);
                     if (res && res[0]) results.push(res[0]);
 
-                    try {
-                        const course = await this.getCourse(id);
-                        if (course && course.teacher_email) {
-                            await this.createNotification(
-                                course.teacher_email,
-                                'New Certificate Request',
-                                `Student ${studentEmail} requested a certificate for your course "${course.title}".`,
-                                'teacher.html?page=certificates',
-                                'cert_requested'
-                            );
-                        }
-                    } catch (e) {
-                        console.warn(`Failed to notify teacher for course ${id}:`, e);
+                    // Queue notification for teacher
+                    if (teacherEmail) {
+                        if (!teacherNotifications[teacherEmail]) teacherNotifications[teacherEmail] = [];
+                        teacherNotifications[teacherEmail].push(courseTitle);
                     }
+                }
+            }
+
+            // Send grouped notifications to teachers to avoid redundancy and ensure they only see their own courses
+            for (const [tEmail, titles] of Object.entries(teacherNotifications)) {
+                try {
+                    const message = titles.length === 1
+                        ? `Student ${studentEmail} requested a certificate for your course "${titles[0]}".`
+                        : `Student ${studentEmail} requested certificates for ${titles.length} of your courses: ${titles.join(', ')}.`;
+
+                    await this.createNotification(
+                        tEmail,
+                        'New Certificate Request(s)',
+                        message,
+                        'teacher.html?page=certificates',
+                        'cert_requested'
+                    );
+                } catch (err) {
+                    console.warn(`Failed to notify teacher ${tEmail}:`, err);
                 }
             }
 
